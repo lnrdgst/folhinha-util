@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Folhinha Útil</string>
+    <string name="refresh_calendar">Atualizar calendário</string>
+    <string name="widget_description">Calendário mensal e seus próximos compromissos. Toque para abrir.</string>
+</resources>

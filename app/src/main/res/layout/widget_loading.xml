@@ -1,0 +1,4 @@
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="#101513" android:padding="20dp" android:textColor="#B6E4BE"
+    android:gravity="center" android:textSize="18sp" android:text="@string/app_name" />
