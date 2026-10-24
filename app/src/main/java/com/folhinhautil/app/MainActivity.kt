@@ -95,6 +95,9 @@ private fun FolhinhaApp(model: CalendarViewModel = viewModel()) {
                     contentDescription = stringResource(R.string.refresh_calendar), tint = Aqua)
             }
         }
+        TextButton(onClick = { context.startActivity(Intent(context, PersonalEventsActivity::class.java)) }) {
+            Text("Eventos pessoais")
+        }
         BoxWithConstraints {
             if (maxWidth >= 700.dp) {
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -185,9 +188,16 @@ private fun MonthPanel(state: CalendarUiState, holidays: List<Holiday>, model: C
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("● Feriado nacional", color = Red, fontSize = 11.sp)
-                    Text("● Outras datas", color = Amber, fontSize = 11.sp)
+                    BoxWithConstraints {
+                        val fullLabel = "● Pontos facultativos e outras datas"
+                        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+                        val style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp)
+                        val widthPx = with(androidx.compose.ui.platform.LocalDensity.current) { maxWidth.roundToPx() }
+                        val label = if (measurer.measure(fullLabel, style).size.width <= widthPx) fullLabel else "● Outras datas"
+                        Text(label, color = Amber, style = style, maxLines = 1)
+                    }
                 }
                 TextButton(onClick = model::today) { Text("Hoje") }
             }

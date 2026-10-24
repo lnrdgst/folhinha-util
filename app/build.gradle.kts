@@ -32,5 +32,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
     implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
     testImplementation("junit:junit:4.13.2")
 }
