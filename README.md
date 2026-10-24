@@ -131,4 +131,5 @@ SHA-256 do APK corrigido: `48A4D0486AFA63A34E7B388473061A48EB39E5BB49200BC91614B
 
 Sem commit ou push nesta entrega.
 #   f o l h i n h a - u t i l  
+ #   f o l h i n h a - u t i l  
  
