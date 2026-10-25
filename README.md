@@ -8,14 +8,15 @@ Um aplicativo nativo de calendário pessoal, com tema escuro e foco em simplicid
 
 - Calendário mensal em português brasileiro, com navegação entre meses e retorno à data atual.
 - Semana começando no domingo, com sábados e domingos em vermelho e destaque para hoje.
-- Grade ajustada a meses de quatro, cinco ou seis semanas.
+- Grade ajustada a meses de quatro, cinco ou seis semanas; cada legenda aparece somente quando há indicadores da respectiva cor no mês.
 - Feriados nacionais offline, com indicadores e consulta ao nome e à categoria de cada data.
+- Oito fases da Lua offline na grade e nos detalhes de cada data, com ícones vetoriais em convenção do hemisfério sul.
 - Pontos facultativos, datas comemorativas e feriados religiosos locais identificados separadamente.
 - Leitura dos calendários disponíveis no Android, incluindo Google Agenda quando sincronizado.
 - Seleção das agendas exibidas, com suporte a ocorrências recorrentes e eventos de dia inteiro.
-- Próximos compromissos em ordem cronológica e atualização manual pelo ícone de refresh.
+- Próximas datas importantes: compromissos das agendas em ordem cronológica e atualização manual pelo ícone de refresh.
 - Widget responsivo com navegação mensal independente por instância e retorno ao mês atual pelo título.
-- Seções separadas para até dois próximos feriados nacionais e até dois próximos eventos, conforme o espaço.
+- Calendário e feriados nacionais lado a lado no widget, com datas facultativas/comemorativas e até dois eventos pessoais abaixo, conforme o espaço.
 - Eventos pessoais locais: cadastro, edição, exclusão com confirmação e repetição anual opcional.
 - Contagem regressiva em dias corridos, com indicação de eventos que acontecem hoje.
 
@@ -62,7 +63,7 @@ Execute os comandos abaixo no PowerShell, na raiz do repositório.
 4. Disponibilize `java` e `adb` no `PATH` da sessão. O Gradle é executado pelo wrapper do projeto.
 
 A primeira compilação precisa de internet para baixar as ferramentas e dependências.
-O aplicativo não precisa de conexão para calcular o calendário e os feriados locais.
+O aplicativo não precisa de conexão para calcular o calendário, os feriados locais e as fases da Lua.
 
 ### 2. Executar testes e lint
 
@@ -102,7 +103,9 @@ Para adicionar o widget, use o painel de widgets da tela inicial do Android e aj
 
 As setas do widget percorrem os meses de 2003 a 2099; tocar no título retorna ao mês atual.
 Cada widget guarda seu próprio mês, sem alterar a seleção da tela principal.
-As listas de próximos feriados e eventos sempre partem de hoje, independentemente do mês visualizado.
+A coluna lateral, sem título redundante, mostra os três primeiros feriados nacionais desde o primeiro dia do mês exibido, incluindo datas já passadas nesse mês. A busca continua pelos meses/anos seguintes, em ordem e sem duplicação. O catálogo termina em 2099; dezembro de 2099 contém somente o Natal e não é extrapolado.
+Em tamanhos insuficientes, um aviso “N feriados · amplie” substitui a lista; sua descrição acessível contém todas as datas e nomes, sem alterar a seleção.
+As contagens dos eventos pessoais sempre partem de hoje, independentemente da navegação.
 
 Em **Eventos pessoais**, informe título e data e, se desejar, ative **Repetir anualmente**.
 Eventos anuais de 29/02 ocorrem em 28/02 nos anos não bissextos; após a data, passam à próxima ocorrência.
@@ -110,9 +113,16 @@ Eventos não anuais passados permanecem no cadastro, mas saem da lista de próxi
 Os registros ficam somente no aparelho, sem sincronização na nuvem; desinstalar o app apaga esses dados.
 
 O widget prioriza o calendário completo, depois os feriados nacionais e os eventos que couberem.
-Quando há espaço para dois eventos e ambas as origens têm dados, reserva um pessoal e um das agendas.
-Cópias de feriados nacionais de dia inteiro com nome e data idênticos são omitidas apenas nessa lista.
-Pontos facultativos e datas comemorativas mantêm suas categorias e a cor amarela; não entram em próximos feriados.
+A seção **Próximos eventos pessoais** mostra somente registros locais; os compromissos Google/Android continuam na tela principal.
+O grupo de datas amarelas, sem título redundante, seleciona as duas últimas datas de cada grupo no mês exibido (até dois pontos facultativos e duas outras datas), em ordem crescente.
+As categorias e os indicadores amarelos são preservados; essas datas ficam separadas dos feriados nacionais por uma linha sutil. Quando cabe sem perder eventos pessoais, o grupo amarelo ocupa a coluna direita; nos demais tamanhos, fica abaixo do calendário.
+O número de itens nas seções inferiores diminui quando o tamanho ou a fonte não permitem mostrar todos com legibilidade.
+
+## Fases da Lua
+
+Cada dia da grade tem um indicador vetorial, além do marcador de feriado. Selecionar uma data mostra sua fase mesmo sem compromissos ou feriados. As quatro fases principais exibem horário local aproximado. As fases intermediárias ocupam os dias entre esses eventos. Não é exibido percentual de iluminação.
+
+O cálculo usa Meeus, capítulo 49, com correções periódicas e planetárias e conversão TT/UT por ΔT. Não usa rede ou persistência. Os ícones são esquemáticos em convenção do hemisfério sul; não reproduzem a rotação aparente no céu. Algoritmo, fontes, precisão e limitações estão em [docs/LUA.md](docs/LUA.md). O widget permanece sem ícones lunares.
 
 ## Permissões e funcionamento
 
@@ -133,7 +143,7 @@ O Android e a economia de bateria podem adiar essas atualizações; a sincroniza
 - Os pontos facultativos federais cadastrados correspondem somente a 2026; portarias futuras exigem atualização do catálogo.
 - Não há consulta de feriados estaduais ou municipais, cadastro de feriados personalizados ou cobertura de feriados excepcionais e eleitorais.
 - A Sexta-feira da Paixão é indicada como feriado religioso dependente de lei municipal; a Páscoa aparece como data comemorativa.
-- Na tela principal, próximos compromissos considera uma janela de 90 dias e exibe até três eventos; a mesma janela de leitura das agendas alimenta o widget.
+- Na tela principal, **Próximas datas importantes** considera uma janela de 90 dias e exibe até três compromissos das agendas.
 - No widget, o número de itens depende do tamanho e da fonte; títulos têm até duas linhas. Tamanhos compactos podem mostrar somente o calendário.
 - Não há edição de compromissos das agendas de origem, notificações ou alarmes. A atualização do widget não é em tempo real.
 

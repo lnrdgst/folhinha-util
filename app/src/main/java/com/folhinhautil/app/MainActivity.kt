@@ -82,6 +82,8 @@ private fun FolhinhaApp(model: CalendarViewModel = viewModel()) {
         }
     }
     val holidays = remember(state.month.year) { BrazilianHolidayProvider().forYear(state.month.year) }
+    val lunarZone = ZoneId.systemDefault()
+    val lunarDays = remember(state.month, lunarZone) { MoonPhases.forMonth(state.month, lunarZone) }
     Column(Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
@@ -96,14 +98,14 @@ private fun FolhinhaApp(model: CalendarViewModel = viewModel()) {
             }
         }
         TextButton(onClick = { context.startActivity(Intent(context, PersonalEventsActivity::class.java)) }) {
-            Text("Eventos pessoais")
+            Text("Eventos pessoais", color = Amber)
         }
         BoxWithConstraints {
             if (maxWidth >= 700.dp) {
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Column(Modifier.weight(1f)) { MonthPanel(state, holidays, model) }
+                    Column(Modifier.weight(1f)) { MonthPanel(state, holidays, model, lunarDays) }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                        DayPanel(state, holidays)
+                        DayPanel(state, holidays, lunarDays.getValue(state.selectedDate), lunarZone)
                         AgendaPanel(state, permissionAttempted,
                             { requestPermission.launch(Manifest.permission.READ_CALENDAR) },
                             { showCalendars = true },
@@ -112,8 +114,8 @@ private fun FolhinhaApp(model: CalendarViewModel = viewModel()) {
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                    MonthPanel(state, holidays, model)
-                    DayPanel(state, holidays)
+                    MonthPanel(state, holidays, model, lunarDays)
+                    DayPanel(state, holidays, lunarDays.getValue(state.selectedDate), lunarZone)
                     AgendaPanel(state, permissionAttempted,
                         { requestPermission.launch(Manifest.permission.READ_CALENDAR) },
                         { showCalendars = true },
@@ -147,7 +149,8 @@ private fun FolhinhaApp(model: CalendarViewModel = viewModel()) {
 }
 
 @Composable
-private fun MonthPanel(state: CalendarUiState, holidays: List<Holiday>, model: CalendarViewModel) {
+private fun MonthPanel(state: CalendarUiState, holidays: List<Holiday>, model: CalendarViewModel, lunarDays: Map<LocalDate, MoonDay>) {
+    val legend = monthLegend(state.month, holidays)
     Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -163,34 +166,11 @@ private fun MonthPanel(state: CalendarUiState, holidays: List<Holiday>, model: C
                         textAlign = TextAlign.Center, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
             }
-            monthGrid(state.month).forEach { week ->
-                Row {
-                    week.forEach { date ->
-                        val datesHolidays = holidays.filter { it.date == date }
-                        val today = date == state.today
-                        val selected = date == state.selectedDate
-                        val color = if (date?.isWeekend() == true) Red else MaterialTheme.colorScheme.onSurface
-                        Box(Modifier.weight(1f).heightIn(min = 48.dp).padding(2.dp)
-                            .then(if (today) Modifier.background(Color(0xFF34513C), CircleShape) else Modifier)
-                            .then(if (selected) Modifier.border(1.dp, Green, CircleShape) else Modifier)
-                            .then(if (date != null) Modifier.clickable { model.selectDay(date) }.semantics {
-                                contentDescription = "${date.format(DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", BrazilianLocale))}" +
-                                    (if (today) ", hoje" else "") + datesHolidays.joinToString("") { ", ${it.name}, ${it.kind.label}" }
-                                this.selected = selected
-                            } else Modifier), contentAlignment = Alignment.Center) {
-                            if (date != null) Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(date.dayOfMonth.toString(), color = color, fontSize = 16.sp, fontWeight = if (today) FontWeight.Bold else FontWeight.Normal)
-                                Box(Modifier.size(4.dp).background(if (datesHolidays.isEmpty()) Color.Transparent
-                                    else if (datesHolidays.any { it.kind == HolidayKind.NATIONAL }) Red else Amber, CircleShape))
-                            }
-                        }
-                    }
-                }
-            }
+            MonthDayGrid(state.month, state.today, state.selectedDate, holidays, lunarDays, model::selectDay)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("● Feriado nacional", color = Red, fontSize = 11.sp)
-                    BoxWithConstraints {
+                    if (legend.national) Text("● Feriado nacional", color = Red, fontSize = 11.sp)
+                    if (legend.other) BoxWithConstraints {
                         val fullLabel = "● Pontos facultativos e outras datas"
                         val measurer = androidx.compose.ui.text.rememberTextMeasurer()
                         val style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp)
@@ -205,17 +185,52 @@ private fun MonthPanel(state: CalendarUiState, holidays: List<Holiday>, model: C
     }
 }
 
+/** Shared by the app and synthetic device validation; no repository or persistent state. */
 @Composable
-private fun DayPanel(state: CalendarUiState, holidays: List<Holiday>) {
+internal fun MonthDayGrid(month: YearMonth, today: LocalDate, selectedDate: LocalDate,
+    holidays: List<Holiday>, lunarDays: Map<LocalDate, MoonDay>, onSelectDay: (LocalDate) -> Unit) {
+    monthGrid(month).forEach { week ->
+        Row {
+            week.forEach { date ->
+                val datesHolidays = holidays.filter { it.date == date }
+                val lunar = lunarDays[date]
+                val today = date == today
+                val selected = date == selectedDate
+                val color = if (date?.isWeekend() == true) Red else MaterialTheme.colorScheme.onSurface
+                Box(Modifier.weight(1f).heightIn(min = 48.dp).padding(2.dp)
+                    .then(if (today) Modifier.background(Color(0xFF34513C), CircleShape) else Modifier)
+                    .then(if (selected) Modifier.border(1.dp, Green, CircleShape) else Modifier)
+                    .then(if (date != null) Modifier.clickable { onSelectDay(date) }.semantics {
+                        contentDescription = "${date.format(DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", BrazilianLocale))}" +
+                            (if (today) ", hoje" else "") + datesHolidays.joinToString("") { ", ${it.name}, ${it.kind.label}" } + ", ${lunar?.phase?.label.orEmpty()}"
+                        this.selected = selected
+                    } else Modifier), contentAlignment = Alignment.Center) {
+                    if (date != null) Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(date.dayOfMonth.toString(), color = color, fontSize = 16.sp, fontWeight = if (today) FontWeight.Bold else FontWeight.Normal)
+                        Row(Modifier.height(14.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Box(Modifier.size(4.dp).background(if (datesHolidays.isEmpty()) Color.Transparent
+                                else if (datesHolidays.any { it.kind == HolidayKind.NATIONAL }) Red else Amber, CircleShape))
+                            lunar?.let { MoonPhaseIcon(it.phase) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun DayPanel(state: CalendarUiState, holidays: List<Holiday>, lunar: MoonDay, zone: ZoneId) {
     val date = state.selectedDate
     val datesHolidays = holidays.filter { it.date == date }
     val events = state.snapshot.monthEvents.filter { it.occursOn(date, ZoneId.systemDefault()) }
         .sortedBy { it.effectiveStart(ZoneId.systemDefault()) }
     val canShowEvents = state.snapshot.permissionGranted && state.snapshot.error == null
-    if (datesHolidays.isEmpty() && (!canShowEvents || events.isEmpty())) return
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(date.format(DateTimeFormatter.ofPattern("EEEE, d 'de' MMMM", BrazilianLocale))
             .replaceFirstChar { it.titlecase(BrazilianLocale) }, fontWeight = FontWeight.SemiBold)
+        LunarDayCard(lunar, zone)
         datesHolidays.forEach { holiday ->
             Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -233,7 +248,7 @@ private fun DayPanel(state: CalendarUiState, holidays: List<Holiday>) {
 private fun AgendaPanel(state: CalendarUiState, attempted: Boolean, request: () -> Unit, calendars: () -> Unit, settings: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Próximos compromissos", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            Text("Próximas datas importantes", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
             if (state.snapshot.permissionGranted) TextButton(onClick = calendars) { Text("Agendas") }
         }
         when {

@@ -31,15 +31,20 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalGlanceRemoteViewsApi::class)
 class WidgetLayoutInstrumentation : Instrumentation() {
     private var checkDevice = false
+    private var onlyLunar = false
+    private var onlyWidget = false
     private var cases = 0
+    private var lunarCases = 0
     private var description = "initialization"
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         checkDevice = arguments?.getString("checkDeviceWidget") == "true"
+        onlyLunar = arguments?.getString("section") == "moon"
+        onlyWidget = arguments?.getString("section") == "widget"
         start()
     }
     override fun onStart() {
-        val total = if (checkDevice) 4 else 3
+        val total = if (onlyLunar) 1 else if (onlyWidget) 3 else if (checkDevice) 5 else 4
         var failures = 0
         fun test(index: Int, name: String, body: () -> Unit) {
             fun status(code: Int, detail: String = "") {
@@ -53,14 +58,17 @@ class WidgetLayoutInstrumentation : Instrumentation() {
             try { body(); status(0) }
             catch (failure: Throwable) {
                 failures++
+                if (description.startsWith("synthetic lunar")) description += "; " + failure.message
                 status(-2, "case=$cases; $description; failure=${failure.javaClass.simpleName}; line=${failure.stackTrace.firstOrNull { it.className == javaClass.name }?.lineNumber}")
             }
         }
+        if (!onlyLunar) {
         test(1, "personalCrudAndDurableStorage") { runBlocking { checkPersistence() } }
         test(2, "independentWidgetMonthState") { runBlocking { checkNavigation() } }
         test(3, "remoteViewsLayoutMatrix") { runBlocking { renderMatrix() } }
-        if (checkDevice) test(4, "selectedCalendarsAtSamsungSize") { runBlocking { checkSamsungData() } }
-        finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "\nRendered cases: $cases; failures: $failures\n") })
+        }
+        if (!onlyWidget) test(if (onlyLunar) 1 else 4, "lunarCalendarAndSelectedDay") { lunarCases = com.folhinhautil.app.runMoonCalendarChecks(this) { description = it } }; if (checkDevice) test(5, "selectedCalendarsAndUnchangedPersonalData") { runBlocking { checkSamsungData() } }
+        finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "\nRendered widget cases: $cases; lunar checks: $lunarCases; failures: $failures\n") })
     }
 
     private suspend fun checkPersistence() {
@@ -117,7 +125,7 @@ class WidgetLayoutInstrumentation : Instrumentation() {
         }
         check(state(one) == "2027-01")
         check(state(two) == "2026-12")
-        // New manager/widget objects read the same persisted state.
+        // A new identifier object reads the same persisted state.
         val reopened = constructor.newInstance(1_000_000_001) as androidx.glance.GlanceId
         check(getAppWidgetState(isolated, PreferencesGlanceStateDefinition, reopened)[ViewedMonth] == "2027-01")
         changeWidgetMonth(isolated, one, -1, today); check(state(one) == "2026-12")
@@ -127,88 +135,114 @@ class WidgetLayoutInstrumentation : Instrumentation() {
 
     private suspend fun renderMatrix() {
         val samsung = DpSize(401.33.dp, 453.87.dp)
-        val bound = DpSize(360.dp, 440.dp)
+        val bound = DpSize(400.dp, 450.dp)
         check(WidgetSizes.filter { it.width <= samsung.width && it.height <= samsung.height }
             .maxBy { it.width.value * it.height.value } == bound)
-        for (scale in listOf(1f, 1.15f, 1.3f, 1.5f)) {
+        val today = LocalDate.of(2026, 10, 24)
+        val fixtures = listOf(PersonalEvent("future", "Aniversário de validação", LocalDate.of(2026, 12, 27)),
+            PersonalEvent("annual", "Evento pessoal de validação", today.minusYears(1), true))
+        for (scale in listOf(1.3f, 1f, 1.15f, 1.5f)) {
             val ctx = targetContext.createConfigurationContext(Configuration(targetContext.resources.configuration).apply { fontScale = scale })
-            for (month in listOf(YearMonth.of(2026, 2), YearMonth.of(2026, 10), YearMonth.of(2026, 8))) {
+            for (month in listOf(YearMonth.of(2026, 2), YearMonth.of(2026, 4), YearMonth.of(2026, 8), YearMonth.of(2026, 10), YearMonth.of(2026, 11), YearMonth.of(2026, 12))) {
                 val holidays = BrazilianHolidayProvider().forYear(month.year)
-                val today = month.atDay(10)
-                for (personalCount in 0..2) for (calendarCount in 0..2) for (size in WidgetSizes + samsung) {
-                    val snapshot = fixture(month, calendarCount)
-                    val personal = listOf(PersonalEvent("today", "Evento pessoal de validação", today),
-                        PersonalEvent("annual", "Ocorrência anual de validação", today.plusDays(3).minusYears(1), true)).take(personalCount)
+                for (count in 0..2) for (size in WidgetSizes + samsung) {
+                    val personal = fixtures.take(count)
                     cases++
-                    description = "font=$scale; weeks=${monthGrid(month).size}; p=$personalCount; c=$calendarCount; size=${size.width.value}x${size.height.value}"
-                    val space = widgetSpace(ctx, size, month, snapshot, today, holidays, personal)
-                    val root = render(ctx, size, month, holidays, snapshot, today, personal)
-                    assertLayout(ctx, root, month, holidays, snapshot, personal, space)
-                    if (size == samsung && scale == 1f && month.monthValue == 10 && personalCount > 0 && calendarCount > 0) {
-                        check(space.nationalHolidays.size == 2)
-                        check(space.events.size == 2)
-                        check(space.events.any { it.item is WidgetNextEvent.Personal })
-                        check(space.events.any { it.item is WidgetNextEvent.Calendar })
+                    description = "font=$scale; month=$month; p=$count; size=${size.width.value}x${size.height.value}"
+                    val space = widgetSpace(ctx, size, month, today, holidays, personal)
+                    val root = render(ctx, size, month, holidays, today, personal)
+                    assertLayout(ctx, root, month, today, holidays, personal, space)
+                    if (size == samsung && scale <= 1.15f) {
+                        check(space.sideBySide)
+                        check(space.selectedHolidays.size == widgetNationalHolidays(month, today).size)
+                        check(space.holidaySummary == null)
+                        if (month.monthValue == 10) check(space.events.size == count)
+                        if (count > 0) check(space.events.isNotEmpty())
                     }
                     if (size == bound) {
                         cases++
-                        val hosted = render(ctx, size, month, holidays, snapshot, today, personal, samsung)
-                        assertLayout(ctx, hosted, month, holidays, snapshot, personal, space)
-                        if (month.monthValue == 10 && scale == 1f && personalCount == 1 && calendarCount == 1)
-                            saveFixturePreview(hosted, "widget-evolution-samsung.png")
-                        if (month.monthValue == 8 && scale == 1.5f && personalCount == 2 && calendarCount == 2)
-                            saveFixturePreview(hosted, "widget-evolution-six-weeks.png")
+                        val hosted = render(ctx, size, month, holidays, today, personal, samsung)
+                        assertLayout(ctx, hosted, month, today, holidays, personal, space)
+                        if (month.monthValue == 10 && scale == 1.15f && count == 2)
+                            saveFixturePreview(hosted, "widget-dynamic-samsung.png")
+                        if (month.monthValue == 11 && scale == 1.15f && count == 2)
+                            saveFixturePreview(hosted, "widget-all-holidays-november.png")
+                        if (month.monthValue == 8 && scale == 1.5f && count == 2)
+                            saveFixturePreview(hosted, "widget-dynamic-six-weeks.png")
                     }
-                    if (size == DpSize(250.dp, 250.dp) && scale == 1.5f && month.monthValue == 10 && personalCount == 0 && calendarCount == 0)
-                        saveFixturePreview(root, "widget-evolution-compact.png")
+                    if (size == DpSize(250.dp, 250.dp) && scale == 1.5f && month.monthValue == 10 && count == 0)
+                        saveFixturePreview(root, "widget-dynamic-compact.png")
+                    if (size == DpSize(500.dp, 360.dp) && scale == 1f && month.monthValue == 12 && count == 2)
+                        saveFixturePreview(root, "widget-dynamic-horizontal.png")
+                }
+            }
+            // A long official name must wrap completely, including with Samsung's accessibility bold.
+            for (size in listOf(bound, DpSize(250.dp, 330.dp), DpSize(500.dp, 250.dp))) {
+                val month = YearMonth.of(2026, 11)
+                val date = LocalDate.of(2026, 11, 16)
+                val holidays = BrazilianHolidayProvider().forYear(month.year)
+                cases++
+                description = "long holiday; font=$scale; size=${size.width.value}x${size.height.value}"
+                val space = widgetSpace(ctx, size, month, date, holidays, fixtures)
+                assertLayout(ctx, render(ctx, size, month, holidays, date, fixtures), month, date, holidays, fixtures, space)
+            }
+
+            // Six-week calendar plus complete selections of varying cardinality. No fixture
+            // is inserted into the legal catalog or the user's persisted data.
+            for (amount in listOf(0, 1, 2, 3, 5, 12)) {
+                val month = YearMonth.of(2026, 8)
+                val provider = object : HolidayProvider {
+                    override fun forYear(year: Int) = BrazilianHolidayProvider().forYear(year) +
+                        (1..amount).map { Holiday(LocalDate.of(year, 8, it), "Feriado de validação $it", HolidayKind.NATIONAL, "fixture") }
+                }
+                val holidays = provider.forYear(month.year)
+                for (size in listOf(bound, DpSize(250.dp, 250.dp), DpSize(800.dp, 1200.dp))) {
+                    cases++
+                    description = "synthetic; font=$scale; count=$amount; size=${size.width.value}x${size.height.value}"
+                    val space = widgetSpace(ctx, size, month, today, holidays, fixtures, provider)
+                    val root = render(ctx, size, month, holidays, today, fixtures, provider = provider)
+                    assertLayout(ctx, root, month, today, holidays, fixtures, space, provider)
+                    check(space.selectedHolidays.size == 3)
+                    if (size.height == 1200.dp) check(space.holidaySummary == null)
+                    if (size == bound && scale == 1.15f && amount == 3)
+                        saveFixturePreview(root, "widget-all-holidays-six-weeks.png")
                 }
             }
         }
         val month = YearMonth.of(2099, 12)
-        val today = month.atDay(26)
-        val snapshot = fixture(month, 0)
+        val todayAtLimit = month.atDay(26)
         val holidays = BrazilianHolidayProvider().forYear(month.year)
         cases++
-        val space = widgetSpace(targetContext, samsung, month, snapshot, today, holidays)
-        check(!space.showAgenda)
-        assertLayout(targetContext, render(targetContext, samsung, month, holidays, snapshot, today), month, holidays, snapshot, emptyList(), space)
+        description = "catalog upper limit"
+        val space = widgetSpace(targetContext, samsung, month, todayAtLimit, holidays)
+        check(space.selectedHolidays.map { it.date } == listOf(month.atDay(25)) && space.events.isEmpty())
+        assertLayout(targetContext, render(targetContext, samsung, month, holidays, todayAtLimit), month, todayAtLimit, holidays, emptyList(), space)
         val reader = java.io.BufferedReader(java.io.InputStreamReader(java.io.FileInputStream(
             uiAutomation.executeShellCommand("logcat -d -t 20000 --pid=${android.os.Process.myPid()} -v brief").fileDescriptor)))
         reader.use { check(it.lineSequence().none { line -> line.contains("Truncated Column container") || line.contains("Truncated Row container") }) }
     }
 
-    private fun fixture(month: YearMonth, count: Int): CalendarSnapshot {
-        val timed = month.atDay(10).atTime(16, 0).atZone(ZoneId.systemDefault()).toInstant()
-        val allDay = month.atDay(11).atStartOfDay(ZoneOffset.UTC).toInstant()
-        return CalendarSnapshot(true, listOf(CalendarInfo(1, "Validação", "", 0)), setOf(1), upcoming = listOf(
-            Appointment(1, 1, "Compromisso de validação", timed, timed.plusSeconds(3600), false),
-            Appointment(2, 1, "Dia inteiro de validação", allDay, allDay.plusSeconds(86400), true)).take(count))
-    }
-
     private suspend fun checkSamsungData() {
-        description = "read-only real calendar coexistence"
+        description = "read-only calendar integration and personal data"
         val snapshot = CalendarRepository(targetContext).load()
         check(snapshot.permissionGranted && snapshot.error == null)
-        val zone = ZoneId.systemDefault()
-        val national = futureNationalHolidays(LocalDate.now())
-        val personal = listOf(PersonalEvent("device-fixture", "Evento pessoal de validação", LocalDate.now()))
-        val target = nextWidgetEvents(emptyList(), snapshot.upcoming, LocalDate.now(), zone, national)
-            .filterIsInstance<WidgetNextEvent.Calendar>().firstOrNull()?.appointment
-        sendStatus(2, Bundle().apply { putString("stream", "device_future_calendar_present=" + (target != null)) })
+        val personal = PersonalEventsRepository(targetContext).events.first()
+        sendStatus(2, Bundle().apply { putString("stream", "device_future_calendar_present=" + snapshot.upcoming.isNotEmpty()) })
         val month = YearMonth.now()
+        val today = LocalDate.now()
         val holidays = BrazilianHolidayProvider().forYear(month.year)
-        for (size in listOf(DpSize(360.dp, 440.dp), DpSize(401.33.dp, 453.87.dp))) {
+        for (size in listOf(DpSize(400.dp, 440.dp), DpSize(401.33.dp, 453.87.dp))) {
             cases++
-            val space = widgetSpace(targetContext, size, month, snapshot, LocalDate.now(), holidays, personal)
-            if (target != null) check(space.events.any { (it.item as? WidgetNextEvent.Calendar)?.appointment == target })
-            val root = render(targetContext, size, month, holidays, snapshot, LocalDate.now(), personal)
-            assertLayout(targetContext, root, month, holidays, snapshot, personal, space)
+            val space = widgetSpace(targetContext, size, month, today, holidays, personal)
+            assertLayout(targetContext, render(targetContext, size, month, holidays, today, personal), month, today, holidays, personal, space)
         }
+        check(PersonalEventsRepository(targetContext).events.first() == personal)
     }
 
-    private suspend fun render(ctx: Context, size: DpSize, month: YearMonth, holidays: List<Holiday>, snapshot: CalendarSnapshot,
-        today: LocalDate, personal: List<PersonalEvent> = emptyList(), viewport: DpSize = size): View {
-        val result = GlanceRemoteViews().compose(ctx, size) { WidgetContent(month, today, holidays, snapshot, personal) }
+    private suspend fun render(ctx: Context, size: DpSize, month: YearMonth, holidays: List<Holiday>,
+        today: LocalDate, personal: List<PersonalEvent> = emptyList(), viewport: DpSize = size,
+        provider: HolidayProvider = BrazilianHolidayProvider()): View {
+        val result = GlanceRemoteViews().compose(ctx, size) { WidgetContent(month, today, holidays, personal, provider) }
         var outcome: Result<View>? = null
         runOnMainSync {
             outcome = runCatching {
@@ -230,8 +264,8 @@ class WidgetLayoutInstrumentation : Instrumentation() {
         if (view is ViewGroup) for (i in 0 until view.childCount) addAll(texts(view.getChildAt(i)))
     }
     private fun bounds(root: View, child: View) = Rect(0, 0, child.width, child.height).also { (root as ViewGroup).offsetDescendantRectToMyCoords(child, it) }
-    private fun assertLayout(ctx: Context, root: View, month: YearMonth, holidays: List<Holiday>, snapshot: CalendarSnapshot,
-        personal: List<PersonalEvent>, space: WidgetSpace) {
+    private fun assertLayout(ctx: Context, root: View, month: YearMonth, today: LocalDate, holidays: List<Holiday>,
+        personal: List<PersonalEvent>, space: WidgetSpace, provider: HolidayProvider = BrazilianHolidayProvider()) {
         val all = texts(root)
         check(all.any { it.text.toString() == space.monthLabel })
         check(WeekLabels.all { label -> all.any { it.text.toString() == label } })
@@ -240,43 +274,110 @@ class WidgetLayoutInstrumentation : Instrumentation() {
             val marker = if (entries.isEmpty()) "" else if (entries.any { it.kind == HolidayKind.NATIONAL }) "•" else "·"
             check(all.any { it.text.toString() == "$day$marker" })
         }
-        val redLegend = all.single { it.text.toString() == "• Feriado" }
-        val amberLegend = all.single { it.text.toString() == space.legendLabel }
-        check(redLegend.currentTextColor == 0xFFFF9894.toInt() && amberLegend.currentTextColor == 0xFFECC88B.toInt())
-                val legendFits = listOf(redLegend, amberLegend).all { it.layout.lineCount == 1 && it.layout.getEllipsisCount(0) == 0 }
-        if (!legendFits) {
-            description += "; legend=" + listOf(redLegend, amberLegend).joinToString { "${it.width}x${it.height}/${it.layout.getEllipsisCount(0)}" }
-            if (description.startsWith("font=")) saveFixturePreview(root, "widget-evolution-failure.png")
-        }
-        check(legendFits)
+        val expectedLegend = monthLegend(month, holidays)
+        val redLegend = all.singleOrNull { it.text.toString() == "• Feriado" }
+        val amberLegend = all.singleOrNull { it.text.toString() == space.legendLabel }
+        check((redLegend != null) == (expectedLegend.national && space.holidaySummary == null))
+        check((amberLegend != null) == expectedLegend.other)
+        if (redLegend != null) check(redLegend.currentTextColor == 0xFFFF9894.toInt())
+        if (amberLegend != null) check(amberLegend.currentTextColor == 0xFFECC88B.toInt())
         if (month == YearMonth.of(2026, 10)) check(all.single { it.text.toString() == "28·" }.currentTextColor == 0xFFECC88B.toInt())
-        check(all.any { it.text.toString() == "Próximos feriados" } == space.nationalHolidays.isNotEmpty())
-        check(all.any { it.text.toString() == "Próximos eventos" } == space.events.isNotEmpty())
-        check(space.nationalHolidays.size <= 2 && space.events.size <= 2)
-        space.nationalHolidays.forEach { check(it.holiday.kind == HolidayKind.NATIONAL); check(all.any { text -> text.text.toString() == it.text }) }
-        for (title in snapshot.upcoming.map { it.title } + personal.map { it.title })
-            check(all.any { it.text.toString() == title } == space.events.any { it.item.title == title })
+        check(all.none { it.text.toString() == "Feriados" })
+        check(all.any { it.text.toString() == "Próximos eventos pessoais" } == space.events.isNotEmpty())
+        check(all.none { it.text.toString() == "Pontos facultativos e outras datas" })
+        check(space.otherDates.map { it.holiday } == widgetOtherDates(month).take(space.otherDates.size))
+        check(space.otherDates.count { it.holiday.kind == HolidayKind.OPTIONAL } <= 2)
+        check(space.otherDates.count { it.holiday.kind != HolidayKind.OPTIONAL } <= 2)
+        space.otherDates.forEach { item ->
+            check(item.holiday.kind != HolidayKind.NATIONAL)
+            check(all.single { it.text.toString() == item.text }.currentTextColor == 0xFFECC88B.toInt())
+        }
+        if (space.otherDates.isNotEmpty()) {
+            val lastOtherDate = all.single { it.text.toString() == space.otherDates.last().text }
+            if (space.events.isNotEmpty()) check(bounds(root, lastOtherDate).bottom <
+                bounds(root, all.single { it.text.toString() == "Próximos eventos pessoais" }).top)
+        }
+        check(space.events.size <= 2)
+        val expectedHolidays = widgetNationalHolidays(month, today, provider)
+        check(space.selectedHolidays == expectedHolidays)
+        if (space.holidaySummary == null) check(space.nationalHolidays.map { it.holiday } == expectedHolidays)
+        else {
+            check(space.nationalHolidays.isEmpty())
+            val summary = all.single { it.text.toString() == space.holidaySummary }
+            check(summary.contentDescription.toString().contains("Amplie"))
+            check(expectedHolidays.all { summary.contentDescription.toString().contains(it.name) &&
+                summary.contentDescription.toString().contains(formatPersonalDate(it.date)) })
+        }
+        space.nationalHolidays.forEach { item ->
+            check(item.holiday.kind == HolidayKind.NATIONAL)
+            check(all.any { it.text.toString() == item.holiday.name })
+            check(all.any { it.text.toString() == item.dateLabel })
+        }
+        check(space.events.map { it.occurrence } == upcomingPersonalEvents(personal, today).take(space.events.size))
+        for (event in personal)
+            check(all.any { it.text.toString() == event.title } == space.events.any { it.occurrence.event == event })
         space.events.forEach { item ->
-            when (val value = item.item) {
-                is WidgetNextEvent.Personal -> {
-                    check(all.any { it.text.toString() == value.occurrence.countdown })
-                    check(all.any { it.text.toString() == formatPersonalDate(value.occurrence.date) })
-                }
-                is WidgetNextEvent.Calendar -> check(all.any { it.text.toString() == value.appointment.description(ZoneId.systemDefault()) })
-            }
+            check(all.any { it.text.toString() == item.occurrence.countdown })
+            check(all.any { it.text.toString() == formatPersonalDate(item.occurrence.date) })
         }
         val rects = all.map { bounds(root, it) }
         check(rects.all { it.left >= 0 && it.top >= 0 && it.right <= root.width + 1 && it.bottom <= root.height + 1 })
         for (a in rects.indices) for (b in a + 1 until rects.size) check(!Rect.intersects(rects[a], rects[b]))
-        check(all.all { it.layout == null || it.layout.height + it.compoundPaddingTop + it.compoundPaddingBottom <= it.height + 2 })
-        val padding = (space.padding * ctx.resources.displayMetrics.density).roundToInt()
-        if (!space.horizontal && space.showAgenda) {
-            val firstHeading = all.first { it.text.toString() == if (space.nationalHolidays.isNotEmpty()) "Próximos feriados" else "Próximos eventos" }
-            check(bounds(root, firstHeading).top > bounds(root, redLegend).bottom)
+        val personalTitles = space.events.map { it.occurrence.event.title }
+        for (text in all) {
+            val fits = text.layout == null || text.layout.height + text.compoundPaddingTop + text.compoundPaddingBottom <= text.height + 2
+            if (!fits) {
+                val role = when (text.text.toString()) {
+                    space.monthLabel -> "month-heading"
+                    "Feriados" -> "holiday-heading"
+                    "Próximos eventos pessoais" -> "personal-heading"
+                    space.legendLabel, "• Feriado" -> "legend"
+                    in space.nationalHolidays.map { it.holiday.name } -> "holiday-name"
+                    else -> "other"
+                }
+                description += "; role=$role; view=${text.width}x${text.height}; layout=${text.layout.height}; lines=${text.layout.lineCount}; textPx=${text.textSize}; sp17px=${android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,17f,ctx.resources.displayMetrics)}; pad=${text.compoundPaddingLeft},${text.compoundPaddingRight}; rawWidth=${text.paint.measureText(text.text.toString())}; modelHeading=${space.monthTitleHeight}"
+                if (description.startsWith("font=") || description.startsWith("long holiday") || description.startsWith("synthetic"))
+                    saveFixturePreview(root, "widget-dynamic-failure.png")
+            }
+            check(fits)
+            if (text.text.toString() !in personalTitles)
+                check((0 until text.layout.lineCount).all { text.layout.getEllipsisCount(it) == 0 })
+            var parent = text.parent as? ViewGroup
+            val childBounds = bounds(root, text)
+            while (parent != null && parent != root) {
+                if (parent.clipChildren) {
+                    val parentBounds = bounds(root, parent)
+                    check(childBounds.left >= parentBounds.left - 2 && childBounds.top >= parentBounds.top - 2 &&
+                        childBounds.right <= parentBounds.right + 2 && childBounds.bottom <= parentBounds.bottom + 2)
+                }
+                parent = parent.parent as? ViewGroup
+            }
         }
-        // Content reaches the available lower region; the host may exceed LocalSize.
-        if (!space.horizontal) check(kotlin.math.abs(root.height - padding - rects.maxOf { it.bottom }) <= 3)
+        val lines = dividerViews(root)
+        val vertical = lines.filter { it.height > it.width }
+        check(vertical.size == if (space.sideBySide) 1 else 0)
+        val horizontalCount = (if (!space.sideBySide && space.nationalHolidays.isNotEmpty()) 1 else 0) +
+            (if (space.events.isNotEmpty()) space.events.size else 0) + (if (space.otherDates.isNotEmpty()) 1 else 0)
+        check(lines.size - vertical.size == horizontalCount)
+        if (space.sideBySide) {
+            val line = bounds(root, vertical.single())
+            check(bounds(root, all.first { it.text.toString() == space.nationalHolidays.first().dateLabel }).left > line.right)
+            check(bounds(root, all.first { it.text.toString() == WeekLabels.first() }).right < line.left)
+            if (space.otherDatesInSidebar) {
+                val yellow = bounds(root, all.first { it.text.toString() == space.otherDates.first().text })
+                check(yellow.left > line.right)
+                check(bounds(root, all.first { it.text.toString() == space.nationalHolidays.last().holiday.name }).bottom < yellow.top)
+            }
+        }
+        val padding = (space.padding * ctx.resources.displayMetrics.density).roundToInt()
+        if (space.footerHeight > 0f || space.legendHeight > 0f)
+            check(kotlin.math.abs(root.height - padding - rects.maxOf { it.bottom }) <= 3)
     }
+    private fun dividerViews(view: View): List<View> = buildList {
+        if ((view.background as? ColorDrawable)?.color == 0xFF465C50.toInt()) add(view)
+        if (view is ViewGroup) for (index in 0 until view.childCount) addAll(dividerViews(view.getChildAt(index)))
+    }
+
     private fun saveFixturePreview(view: View, name: String) {
         val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
         runOnMainSync { view.draw(Canvas(bitmap)) }

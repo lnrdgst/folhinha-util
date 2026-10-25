@@ -21,7 +21,7 @@ import androidx.glance.text.*
 import androidx.glance.unit.ColorProvider
 import com.folhinhautil.app.MainActivity
 import com.folhinhautil.app.R
-import com.folhinhautil.app.data.*
+import com.folhinhautil.app.data.PersonalEventsRepository
 import com.folhinhautil.app.domain.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.catch
@@ -31,14 +31,13 @@ import java.time.format.DateTimeFormatter
 import kotlin.math.*
 
 internal val WidgetSizes = setOf(DpSize(250.dp, 250.dp), DpSize(250.dp, 330.dp), DpSize(360.dp, 440.dp),
-    DpSize(250.dp, 540.dp), DpSize(500.dp, 250.dp), DpSize(500.dp, 360.dp))
+    DpSize(400.dp, 440.dp), DpSize(400.dp, 450.dp), DpSize(250.dp, 540.dp), DpSize(500.dp, 250.dp), DpSize(500.dp, 360.dp))
 
 class FolhinhaWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Responsive(WidgetSizes)
     override val stateDefinition = PreferencesGlanceStateDefinition
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // Google queries and their refresh mechanism remain based on the current date.
-        val snapshot = CalendarRepository(context).load(YearMonth.now())
+        // The widget now presents local personal events. Android calendars remain in MainActivity.
         val personalFlow = PersonalEventsRepository(context).events.catch {
             if (it is CancellationException) throw it
             emit(emptyList())
@@ -49,7 +48,7 @@ class FolhinhaWidget : GlanceAppWidget() {
             val personal by personalFlow.collectAsState(initialPersonal)
             val today = LocalDate.now()
             val month = widgetMonth(prefs[ViewedMonth], today)
-            WidgetContent(month, today, BrazilianHolidayProvider().forYear(month.year), snapshot, personal)
+            WidgetContent(month, today, BrazilianHolidayProvider().forYear(month.year), personal)
         }
     }
 }
@@ -61,19 +60,24 @@ private val Amber = Color(0xFFECC88B)
 private val Aqua = Color(0xFF9ED8CB)
 private val Divider = Color(0xFF465C50)
 private const val SectionSeparation = 9f
-private const val GroupGap = 6f
-private const val ItemGap = 4f
+private const val SideSeparation = 17f
 
-internal data class WidgetHolidaySpace(val holiday: Holiday, val text: String, val height: Float)
-internal data class WidgetEventSpace(val item: WidgetNextEvent, val titleHeight: Float, val detailHeight: Float, val dateHeight: Float = 0f) {
+internal data class WidgetHolidaySpace(val holiday: Holiday, val dateLabel: String, val dateHeight: Float, val nameHeight: Float) {
+    val height get() = dateHeight + nameHeight
+}
+internal data class WidgetOtherSpace(val holiday: Holiday, val text: String, val height: Float)
+internal data class WidgetPersonalSpace(val occurrence: PersonalOccurrence, val titleHeight: Float, val detailHeight: Float, val dateHeight: Float) {
     val height get() = titleHeight + detailHeight + dateHeight
 }
 internal data class WidgetSpace(
-    val horizontal: Boolean, val padding: Float, val monthLabel: String, val monthTitleHeight: Float,
-    val weekdayHeight: Float, val dayHeight: Float, val legendHeight: Float, val legendLabel: String, val gapScale: Float,
-    val monthHeight: Float, val holidayTitleHeight: Float, val eventTitleHeight: Float,
-    val nationalHolidays: List<WidgetHolidaySpace>, val events: List<WidgetEventSpace>, val footerHeight: Float,
-) { val showAgenda get() = nationalHolidays.isNotEmpty() || events.isNotEmpty() }
+    val sideBySide: Boolean, val padding: Float, val calendarWidth: Float, val holidayWidth: Float,
+    val monthLabel: String, val monthTitleHeight: Float, val weekdayHeight: Float, val dayHeight: Float,
+    val legendHeight: Float, val legendLabel: String, val legend: MonthLegend, val gapScale: Float, val topMinimumHeight: Float,
+    val holidaySectionHeight: Float, val eventTitleHeight: Float,
+    val selectedHolidays: List<Holiday>, val holidayGap: Float, val holidaySummary: String?,
+    val nationalHolidays: List<WidgetHolidaySpace>, val otherDates: List<WidgetOtherSpace>, val otherDatesInSidebar: Boolean,
+    val otherSectionHeight: Float, val events: List<WidgetPersonalSpace>, val personalSectionHeight: Float, val footerHeight: Float,
+)
 
 private fun widgetTypeface(context: Context, bold: Boolean): Typeface {
     if (android.os.Build.VERSION.SDK_INT >= 31) {
@@ -82,85 +86,145 @@ private fun widgetTypeface(context: Context, bold: Boolean): Typeface {
     }
     return Typeface.create(Typeface.DEFAULT, if (bold) Typeface.BOLD else Typeface.NORMAL)
 }
-internal fun widgetSpace(context: Context, size: DpSize, month: YearMonth, snapshot: CalendarSnapshot,
-    today: LocalDate, holidays: List<Holiday>, personal: List<PersonalEvent> = emptyList()): WidgetSpace {
+
+internal fun widgetSpace(context: Context, size: DpSize, month: YearMonth, today: LocalDate,
+    holidays: List<Holiday>, personal: List<PersonalEvent> = emptyList(),
+    holidayProvider: HolidayProvider = BrazilianHolidayProvider()): WidgetSpace {
     val density = context.resources.displayMetrics.density
-    fun textHeight(text: String, sp: Float, width: Float, lines: Int, bold: Boolean = false): Float {
-        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, context.resources.displayMetrics)
-            typeface = widgetTypeface(context, bold)
-        }
-        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, floor(width * density).toInt().coerceAtLeast(1))
+    fun paint(sp: Float, bold: Boolean = false) = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, context.resources.displayMetrics)
+        typeface = widgetTypeface(context, bold)
+    }
+    fun height(text: String, sp: Float, width: Float, lines: Int = Int.MAX_VALUE, bold: Boolean = false): Float {
+        // RemoteViews rounds each weighted child independently; avoid a one-pixel wrapping cliff.
+        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint(sp, bold), floor((width - 2f).coerceAtLeast(1f) * density).toInt().coerceAtLeast(1))
             .setIncludePad(true).setMaxLines(lines).build()
         return ceil(layout.height + 2f * density) / density
     }
-    val horizontal = size.width >= 500.dp
+    fun width(text: String, sp: Float, bold: Boolean = false) = paint(sp, bold).measureText(text) / density
+    val label = if (size.width < 300.dp) month.format(DateTimeFormatter.ofPattern("MMM yyyy", BrazilianLocale))
+        .replaceFirstChar { it.titlecase(BrazilianLocale) } else month.label()
     var padding = 12f
-    var width = 0f
-    var label = month.label()
-    var heading = 0f
-    var weekday = 0f
-    var day = 0f
-    var legend = 0f
-    var textTotal = 0f
-    fun measureMonth() {
-        width = size.width.value - 2 * padding - if (horizontal) 226f else 0f
-        label = if (width < 300f) month.format(DateTimeFormatter.ofPattern("MMM yyyy", BrazilianLocale))
-            .replaceFirstChar { it.titlecase(BrazilianLocale) } else month.label()
-        heading = maxOf(32f, textHeight(label, 17f, width - 64f, 2, true))
-        weekday = WeekLabels.maxOf { textHeight(it, 9f, width / 7, 1) }
-        day = maxOf(ceil(25 * density) / density, (1..month.lengthOfMonth()).maxOf {
-            textHeight(widgetDayLabel(month.atDay(it), holidays), 13f, width / 7, 2, month.atDay(it) == today)
-        })
-        legend = maxOf(textHeight("• Feriado", 9f, width, 1), textHeight("• Outras datas", 9f, width, 1))
-        textTotal = heading + weekday + monthGrid(month).size * day + legend
+    var innerWidth = size.width.value - padding * 2
+    val weeks = monthGrid(month).size
+    val day = maxOf(ceil(25 * density) / density, (1..month.lengthOfMonth()).maxOf {
+        height(widgetDayLabel(month.atDay(it), holidays), 13f, innerWidth / 7, 1, month.atDay(it) == today)
+    })
+    val weekday = WeekLabels.maxOf { height(it, 9f, innerWidth / 7, 1) }
+    val legendKinds = monthLegend(month, holidays)
+    var legend = if (legendKinds.national || legendKinds.other) height("• Outras datas", 9f, innerWidth, 1) else 0f
+    val baseHeading = maxOf(32f, height(label, 17f, innerWidth - 64f, 2, true))
+    val textMinimum = baseHeading + weekday + weeks * day + legend
+    if (textMinimum > size.height.value - 2 * padding) {
+        padding = ((size.height.value - textMinimum) / 2).coerceIn(0f, 12f)
+        innerWidth = size.width.value - padding * 2
     }
-    measureMonth()
-    if (textTotal > size.height.value - padding * 2) {
-        padding = ((size.height.value - textTotal) / 2).coerceIn(0f, 12f)
-        measureMonth()
-    }
-    val legendPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 9f, context.resources.displayMetrics)
-        typeface = widgetTypeface(context, false)
-    }
+    var available = size.height.value - 2 * padding
+    var gapScale = ((available - textMinimum) / (if (legend > 0f) 10f else 8f)).coerceIn(0f, 1f)
+    var gridMinimum = weekday + 2f * gapScale + weeks * day
     val fullLegend = "• Pontos facultativos e outras datas"
-    val legendLabel = if (legendPaint.measureText("• Feriado") + legendPaint.measureText(fullLegend) +
-        12f * density <= width * density) fullLegend else "• Outras datas"
-    val gapScale = ((size.height.value - 2 * padding - textTotal) / 10f).coerceIn(0f, 1f)
-    val monthHeight = textTotal + 10 * gapScale
-    val footerWidth = if (horizontal) 210f else width
-    val holidayHeading = textHeight("Próximos feriados", 14f, footerWidth, 2, true)
-    val eventHeading = textHeight("Próximos eventos", 14f, footerWidth, 2, true)
-    val enabled = horizontal || size.height >= 330.dp
-    var remaining = if (!enabled) 0f else size.height.value - 2 * padding - 1f -
-        if (horizontal) 0f else monthHeight + SectionSeparation
-    val national = futureNationalHolidays(today)
-    val holidayRows = mutableListOf<WidgetHolidaySpace>()
-    var used = 0f
-    for (holiday in national.take(2)) {
-        val text = "${holiday.date.format(DateTimeFormatter.ofPattern("dd/MM"))} · ${holiday.name}"
-        val height = textHeight(text, 11f, footerWidth, 2)
-        val cost = height + if (holidayRows.isEmpty()) holidayHeading + 3f else ItemGap
-        if (cost > remaining) break
-        holidayRows += WidgetHolidaySpace(holiday, text, height)
-        used += cost; remaining -= cost
+    var legendLabel = if ((if (legendKinds.national) width("• Feriado", 9f) + 6f else 0f) + width(fullLegend, 9f) + 12f <= innerWidth) fullLegend else "• Outras datas"
+    val candidates = widgetNationalHolidays(month, today, holidayProvider)
+    val desiredHolidayWidth = (innerWidth * .34f).coerceIn(110f, 170f)
+    val sideCalendarWidth = innerWidth - desiredHolidayWidth - SideSeparation
+    val minimumCellWidth = maxOf(WeekLabels.maxOf { width(it, 9f) },
+        (1..month.lengthOfMonth()).maxOf { width(widgetDayLabel(month.atDay(it), holidays), 13f, month.atDay(it) == today) }) + 2f
+    var sideBySide = candidates.isNotEmpty() && size.width >= 340.dp && sideCalendarWidth >= 7 * minimumCellWidth
+    var calendarWidth = if (sideBySide) sideCalendarWidth else innerWidth
+    var heading = maxOf(32f, height(label, 17f, calendarWidth - 64f, 2, true))
+    var holidayWidth = if (sideBySide) desiredHolidayWidth else innerWidth
+    var holidayGap = if (candidates.size > 2) 4f else 10f
+    var holidayRows = emptyList<WidgetHolidaySpace>()
+    var holidaySummary: String? = null
+    fun holidayHeight(rows: List<WidgetHolidaySpace>): Float =
+        if (rows.isEmpty()) 0f else rows.sumOf { it.height.toDouble() }.toFloat() + (rows.size - 1) * holidayGap
+    fun topHeight(rows: List<WidgetHolidaySpace>): Float = heading + (if (legend > 0f) 8f else 6f) * gapScale + legend +
+        if (sideBySide) maxOf(gridMinimum, holidayHeight(rows))
+        else gridMinimum + if (rows.isEmpty()) 0f else SectionSeparation + holidayHeight(rows)
+    fun measureHolidays() = candidates.map { holiday ->
+        val dateLabel = holiday.date.format(DateTimeFormatter.ofPattern(if (holiday.date.year != month.year) "dd/MM/yyyy" else "dd/MM"))
+        WidgetHolidaySpace(holiday, dateLabel, height(dateLabel, 10f, holidayWidth, 1), height(holiday.name, 11f, holidayWidth))
     }
-    val eventRows = mutableListOf<WidgetEventSpace>()
-    for (item in nextWidgetEvents(personal, snapshot.upcoming, today, ZoneId.systemDefault(), national)) {
-        val measured = when (item) {
-            is WidgetNextEvent.Calendar -> WidgetEventSpace(item,
-                textHeight(item.title, 13f, footerWidth, 2), textHeight(item.appointment.description(ZoneId.systemDefault()), 10f, footerWidth, 3))
-            is WidgetNextEvent.Personal -> WidgetEventSpace(item, textHeight(item.title, 13f, footerWidth, 2),
-                textHeight(item.occurrence.countdown, 11f, footerWidth, 1), textHeight(formatPersonalDate(item.occurrence.date), 10f, footerWidth, 1))
+    val gaps = if (candidates.size > 2) listOf(4f, 2f, 0f) else listOf(10f, 4f, 2f, 0f)
+    fun fitCompleteList(): Boolean {
+        val rows = measureHolidays()
+        for (gap in gaps) {
+            holidayGap = gap
+            if (topHeight(rows) <= available) { holidayRows = rows; return true }
         }
-        val cost = measured.height + if (eventRows.isEmpty()) eventHeading + 3f +
-            (if (holidayRows.isEmpty()) 0f else GroupGap) else ItemGap
-        if (cost > remaining) continue
-        eventRows += measured; used += cost; remaining -= cost
+        return false
     }
-    return WidgetSpace(horizontal, padding, label, heading, weekday, day, legend, legendLabel, gapScale, monthHeight,
-        holidayHeading, eventHeading, holidayRows, eventRows, ceil(used * density) / density)
+    var fits = fitCompleteList()
+    // First compact the gaps, then widen the sidebar without shrinking the calendar numbers.
+    if (!fits && sideBySide) {
+        calendarWidth = 7 * minimumCellWidth
+        holidayWidth = innerWidth - calendarWidth - SideSeparation
+        heading = maxOf(32f, height(label, 17f, calendarWidth - 64f, 2, true))
+        fits = fitCompleteList()
+    }
+    if (!fits) {
+        sideBySide = false; calendarWidth = innerWidth; holidayWidth = innerWidth
+        heading = baseHeading
+        fits = fitCompleteList()
+    }
+    if (!fits) {
+        // Keep the complete selection. On very small widgets, reuse the legend strip for an
+        // explicit summary instead of silently dropping names or reducing the calendar font.
+        holidaySummary = "${candidates.size} feriados · amplie"
+        holidayRows = emptyList()
+        sideBySide = false
+        legend = maxOf(legend, height(holidaySummary, 9f, innerWidth, 1))
+        val minimum = baseHeading + weekday + weeks * day + legend
+        padding = minOf(padding, ((size.height.value - minimum) / 2).coerceIn(0f, 12f))
+        innerWidth = size.width.value - padding * 2
+        available = size.height.value - padding * 2
+        gapScale = ((available - minimum) / 10f).coerceIn(0f, 1f)
+        gridMinimum = weekday + 2f * gapScale + weeks * day
+        calendarWidth = innerWidth; holidayWidth = innerWidth
+        heading = maxOf(32f, height(label, 17f, calendarWidth - 64f, 2, true))
+        val remainingLegendWidth = innerWidth - width(holidaySummary, 9f) - 12f
+        legendLabel = if (width(fullLegend, 9f) <= remainingLegendWidth) fullLegend
+            else if (width("• Outras datas", 9f) <= remainingLegendWidth) "• Outras datas" else "• Outras"
+    }
+    val otherCandidates = widgetOtherDates(month)
+    fun otherRows(sidebar: Boolean) = otherCandidates.map { holiday ->
+        val text = "${holiday.date.format(DateTimeFormatter.ofPattern("dd/MM"))} · ${holiday.name}"
+        WidgetOtherSpace(holiday, text, height(text, 11f, if (sidebar) holidayWidth else innerWidth))
+    }
+    val eventHeading = height("Próximos eventos pessoais", 14f, innerWidth, 2, true)
+    val allEvents = upcomingPersonalEvents(personal, today).take(2).map { occurrence ->
+        WidgetPersonalSpace(occurrence, height(occurrence.event.title, 13f, innerWidth, 2),
+            height(occurrence.countdown, 11f, innerWidth, 1), height(formatPersonalDate(occurrence.date), 10f, innerWidth, 1))
+    }
+    fun otherHeight(count: Int, sidebar: Boolean) = if (count == 0) 0f else
+        otherRows(sidebar).take(count).sumOf { it.height.toDouble() }.toFloat() + (count - 1) * 4f
+    fun personalHeight(count: Int) = if (count == 0) 0f else eventHeading + 6f +
+        allEvents.take(count).sumOf { it.height.toDouble() }.toFloat() + (count - 1) * SectionSeparation
+    data class Placement(val other: Int, val personal: Int, val sidebar: Boolean)
+    fun topHeight(placement: Placement): Float {
+        if (!placement.sidebar || placement.other == 0) return topHeight(holidayRows)
+        return heading + (if (legend > 0f) 8f else 6f) * gapScale + legend +
+            maxOf(gridMinimum, holidayHeight(holidayRows) + SectionSeparation + otherHeight(placement.other, true))
+    }
+    fun footerHeight(placement: Placement): Float = personalHeight(placement.personal) +
+        (if (placement.sidebar) 0f else otherHeight(placement.other, false)) +
+        (if (!placement.sidebar && placement.other > 0 && placement.personal > 0) SectionSeparation else 0f)
+    fun hasFooter(placement: Placement) = placement.personal > 0 || (!placement.sidebar && placement.other > 0)
+    val placements = listOf(false, true).filter { !it || (sideBySide && holidayRows.isNotEmpty()) }.flatMap { sidebar ->
+        (0..otherCandidates.size).flatMap { other -> (0..allEvents.size).map { Placement(other, it, sidebar) } }
+    }
+    // Prefer a separate yellow group in the sidebar when it fits without losing personal events.
+    val placement = placements.filter { topHeight(it) + footerHeight(it) + (if (hasFooter(it)) SectionSeparation else 0f) <= available }
+        .maxWithOrNull(compareBy<Placement> {
+            if ((otherCandidates.isEmpty() || it.other > 0) && (allEvents.isEmpty() || it.personal > 0)) 1 else 0
+        }.thenBy { it.personal }.thenBy { it.other }.thenBy { if (it.sidebar && it.other > 0) 1 else 0 }) ?: Placement(0,0,false)
+    val other = otherRows(placement.sidebar).take(placement.other)
+    val events = allEvents.take(placement.personal)
+    return WidgetSpace(sideBySide, padding, calendarWidth, holidayWidth, label, heading, weekday, day,
+        legend, legendLabel, legendKinds, gapScale, topHeight(placement), holidayHeight(holidayRows), eventHeading,
+        candidates, holidayGap, holidaySummary, holidayRows, other, placement.sidebar && other.isNotEmpty(), otherHeight(placement.other, placement.sidebar),
+        events, personalHeight(placement.personal), ceil(footerHeight(placement) * density) / density)
+
 }
 
 private fun widgetDayLabel(date: LocalDate?, holidays: List<Holiday>): String {
@@ -171,51 +235,73 @@ private fun widgetDayLabel(date: LocalDate?, holidays: List<Holiday>): String {
 }
 
 @Composable
-internal fun WidgetContent(month: YearMonth, today: LocalDate, holidays: List<Holiday>, snapshot: CalendarSnapshot,
-    personal: List<PersonalEvent> = emptyList()) {
-    val space = widgetSpace(LocalContext.current, LocalSize.current, month, snapshot, today, holidays, personal)
+internal fun WidgetContent(month: YearMonth, today: LocalDate, holidays: List<Holiday>, personal: List<PersonalEvent> = emptyList(),
+    holidayProvider: HolidayProvider = BrazilianHolidayProvider()) {
+    val space = widgetSpace(LocalContext.current, LocalSize.current, month, today, holidays, personal, holidayProvider)
     Column(GlanceModifier.fillMaxSize().background(Color(0xFF101513)).padding(space.padding.dp).clickable(actionStartActivity<MainActivity>())) {
-        if (space.horizontal) {
-            Row(GlanceModifier.fillMaxSize()) {
-                Column(GlanceModifier.defaultWeight().fillMaxHeight()) { WidgetMonth(month, today, holidays, space) }
-                Spacer(GlanceModifier.width(16.dp))
-                Column(GlanceModifier.width(210.dp)) { if (space.showAgenda) WidgetFooter(space) }
+        Column(GlanceModifier.fillMaxWidth().defaultWeight()) {
+            WidgetHeader(month, space)
+            Spacer(GlanceModifier.height((6 * space.gapScale).dp))
+            if (space.sideBySide) {
+                Row(GlanceModifier.fillMaxWidth().defaultWeight()) {
+                    Column(GlanceModifier.defaultWeight().fillMaxHeight()) { WidgetGrid(month, today, holidays, space) }
+                    Spacer(GlanceModifier.width(8.dp))
+                    Box(GlanceModifier.width(1.dp).fillMaxHeight().background(Divider)) {}
+                    Spacer(GlanceModifier.width(8.dp))
+                    Column(GlanceModifier.width(space.holidayWidth.dp)) {
+                        WidgetHolidays(space)
+                        if (space.otherDatesInSidebar) { WidgetSeparator(); WidgetOtherDates(space) }
+                    }
+                }
+                if (space.legendHeight > 0) Spacer(GlanceModifier.height((2 * space.gapScale).dp))
+                WidgetLegend(space)
+            } else {
+                Column(GlanceModifier.fillMaxWidth().defaultWeight()) { WidgetGrid(month, today, holidays, space) }
+                if (space.legendHeight > 0) Spacer(GlanceModifier.height((2 * space.gapScale).dp))
+                WidgetLegend(space)
+                if (space.nationalHolidays.isNotEmpty()) {
+                    WidgetSeparator()
+                    WidgetHolidays(space)
+                }
             }
-        } else {
-            Column(GlanceModifier.fillMaxWidth().defaultWeight()) { WidgetMonth(month, today, holidays, space) }
-            if (space.showAgenda) {
-                Spacer(GlanceModifier.height(4.dp))
-                Box(GlanceModifier.fillMaxWidth().height(1.dp).background(Divider)) {}
-                Spacer(GlanceModifier.height(4.dp))
-                WidgetFooter(space)
+        }
+        if ((!space.otherDatesInSidebar && space.otherDates.isNotEmpty()) || space.events.isNotEmpty()) {
+            WidgetSeparator()
+            Column(GlanceModifier.fillMaxWidth().height(space.footerHeight.dp)) {
+                if (!space.otherDatesInSidebar && space.otherDates.isNotEmpty()) WidgetOtherDates(space)
+                if (!space.otherDatesInSidebar && space.otherDates.isNotEmpty() && space.events.isNotEmpty()) WidgetSeparator()
+                if (space.events.isNotEmpty()) WidgetPersonalEvents(space)
             }
         }
     }
 }
 
 @Composable
-private fun WidgetMonth(month: YearMonth, today: LocalDate, holidays: List<Holiday>, space: WidgetSpace) {
-    Column(GlanceModifier.fillMaxSize()) {
-        Row(GlanceModifier.fillMaxWidth().height(space.monthTitleHeight.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(GlanceModifier.width(32.dp).fillMaxHeight().then(if (month > YearMonth.of(FirstYear, 1))
-                GlanceModifier.clickable(actionRunCallback<NavigateMonthAction>(actionParametersOf(MonthDelta to -1))) else GlanceModifier), contentAlignment = Alignment.Center) {
-                Image(ImageProvider(R.drawable.ic_month_previous), "Mês anterior", GlanceModifier.size(20.dp))
-            }
-            Text(space.monthLabel, GlanceModifier.defaultWeight().fillMaxHeight()
-                .clickable(actionRunCallback<NavigateMonthAction>(actionParametersOf(MonthDelta to 0)))
-                .semantics { contentDescription = "${month.label()}. Voltar ao mês atual" },
-                style = TextStyle(color = ColorProvider(Green), fontSize = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center), maxLines = 2)
-            Box(GlanceModifier.width(32.dp).fillMaxHeight().then(if (month < YearMonth.of(LastYear, 12))
-                GlanceModifier.clickable(actionRunCallback<NavigateMonthAction>(actionParametersOf(MonthDelta to 1))) else GlanceModifier), contentAlignment = Alignment.Center) {
-                Image(ImageProvider(R.drawable.ic_month_next), "Próximo mês", GlanceModifier.size(20.dp))
-            }
+private fun WidgetHeader(month: YearMonth, space: WidgetSpace) {
+    Row(GlanceModifier.width(space.calendarWidth.dp).height(space.monthTitleHeight.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(GlanceModifier.width(32.dp).fillMaxHeight().then(if (month > YearMonth.of(FirstYear, 1))
+            GlanceModifier.clickable(actionRunCallback<NavigateMonthAction>(actionParametersOf(MonthDelta to -1))) else GlanceModifier), contentAlignment = Alignment.Center) {
+            Image(ImageProvider(R.drawable.ic_month_previous), "Mês anterior", GlanceModifier.size(20.dp))
         }
-        Spacer(GlanceModifier.height((6f * space.gapScale).dp))
+        Text(space.monthLabel, GlanceModifier.defaultWeight().fillMaxHeight()
+            .clickable(actionRunCallback<NavigateMonthAction>(actionParametersOf(MonthDelta to 0)))
+            .semantics { contentDescription = "${month.label()}. Voltar ao mês atual" },
+            style = TextStyle(color = ColorProvider(Green), fontSize = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center), maxLines = 2)
+        Box(GlanceModifier.width(32.dp).fillMaxHeight().then(if (month < YearMonth.of(LastYear, 12))
+            GlanceModifier.clickable(actionRunCallback<NavigateMonthAction>(actionParametersOf(MonthDelta to 1))) else GlanceModifier), contentAlignment = Alignment.Center) {
+            Image(ImageProvider(R.drawable.ic_month_next), "Próximo mês", GlanceModifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun WidgetGrid(month: YearMonth, today: LocalDate, holidays: List<Holiday>, space: WidgetSpace) {
+    Column(GlanceModifier.fillMaxSize()) {
         Row(GlanceModifier.fillMaxWidth()) {
             WeekLabels.forEachIndexed { index, label -> Text(label, GlanceModifier.defaultWeight().height(space.weekdayHeight.dp),
                 style = TextStyle(color = ColorProvider(if (index == 0 || index == 6) Red else Neutral), fontSize = 9.sp, textAlign = TextAlign.Center), maxLines = 1) }
         }
-        Spacer(GlanceModifier.height((2f * space.gapScale).dp))
+        Spacer(GlanceModifier.height((2 * space.gapScale).dp))
         Column(GlanceModifier.fillMaxWidth().defaultWeight()) {
             monthGrid(month).forEach { week -> Row(GlanceModifier.fillMaxWidth().defaultWeight()) {
                 week.forEach { date ->
@@ -224,50 +310,87 @@ private fun WidgetMonth(month: YearMonth, today: LocalDate, holidays: List<Holid
                     Box(GlanceModifier.defaultWeight().fillMaxHeight().background(if (date == today) Color(0xFF34513C) else Color(0xFF101513)), contentAlignment = Alignment.Center) {
                         Text(widgetDayLabel(date, holidays), style = TextStyle(color = ColorProvider(if (date?.isWeekend() == true || national) Red
                             else if (entries.isNotEmpty()) Amber else Neutral), fontSize = 13.sp,
-                            fontWeight = if (date == today) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center), maxLines = 2)
+                            fontWeight = if (date == today) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center), maxLines = 1)
                     }
                 }
             } }
-        }
-        Spacer(GlanceModifier.height((2f * space.gapScale).dp))
-        Row(GlanceModifier.fillMaxWidth().height(space.legendHeight.dp)) {
-            Text("• Feriado", GlanceModifier.height(space.legendHeight.dp), style = TextStyle(color = ColorProvider(Red), fontSize = 9.sp), maxLines = 1)
-            Spacer(GlanceModifier.width(6.dp))
-            Text(space.legendLabel, GlanceModifier.defaultWeight().height(space.legendHeight.dp), style = TextStyle(color = ColorProvider(Amber), fontSize = 9.sp), maxLines = 1)
         }
     }
 }
 
 @Composable
-private fun WidgetFooter(space: WidgetSpace) {
-    Column(GlanceModifier.fillMaxWidth().height(space.footerHeight.dp)) {
-        if (space.nationalHolidays.isNotEmpty()) Column(GlanceModifier.fillMaxWidth()) {
-            Text("Próximos feriados", GlanceModifier.height(space.holidayTitleHeight.dp), style = TextStyle(color = ColorProvider(Green), fontSize = 14.sp, fontWeight = FontWeight.Bold), maxLines = 2)
-            Spacer(GlanceModifier.height(3.dp))
-            Column { space.nationalHolidays.forEachIndexed { index, item ->
-                if (index > 0) Spacer(GlanceModifier.height(ItemGap.dp))
-                Text(item.text, GlanceModifier.height(item.height.dp), style = TextStyle(color = ColorProvider(Red), fontSize = 11.sp), maxLines = 2)
-            } }
+private fun WidgetLegend(space: WidgetSpace) {
+    if (space.legendHeight > 0) Row(GlanceModifier.fillMaxWidth().height(space.legendHeight.dp)) {
+        if (space.holidaySummary != null) {
+            val description = space.selectedHolidays.joinToString("; ") { "${formatPersonalDate(it.date)}: ${it.name}" } +
+                ". Amplie o widget para ver a lista completa de feriados."
+            Text(space.holidaySummary, GlanceModifier.height(space.legendHeight.dp).semantics { contentDescription = description },
+                style = TextStyle(color = ColorProvider(Red), fontSize = 9.sp), maxLines = 1)
+        } else if (space.legend.national) Text("• Feriado", GlanceModifier.height(space.legendHeight.dp), style = TextStyle(color = ColorProvider(Red), fontSize = 9.sp), maxLines = 1)
+        if ((space.legend.national || space.holidaySummary != null) && space.legend.other) Spacer(GlanceModifier.width(6.dp))
+        if (space.legend.other) Text(space.legendLabel, GlanceModifier.defaultWeight().height(space.legendHeight.dp), style = TextStyle(color = ColorProvider(Amber), fontSize = 9.sp), maxLines = 1)
+    }
+}
+
+@Composable
+private fun WidgetHolidays(space: WidgetSpace) {
+    Column(GlanceModifier.fillMaxWidth().height(space.holidaySectionHeight.dp)) {
+        WidgetHolidayRows(space.nationalHolidays, space.holidayGap)
+    }
+}
+
+/** At most seven direct children at every level, regardless of the selected holiday count. */
+@Composable
+private fun WidgetHolidayRows(rows: List<WidgetHolidaySpace>, gap: Float) {
+    Column(GlanceModifier.fillMaxWidth()) {
+        if (rows.size <= 4) rows.forEachIndexed { index, item ->
+            if (index > 0) Spacer(GlanceModifier.height(gap.dp))
+            Column(GlanceModifier.fillMaxWidth()) {
+                Text(item.dateLabel, GlanceModifier.height(item.dateHeight.dp), style = TextStyle(color = ColorProvider(Red), fontSize = 10.sp), maxLines = 1)
+                Text(item.holiday.name, GlanceModifier.height(item.nameHeight.dp).semantics { contentDescription = "${item.holiday.name}, ${item.holiday.kind.label}" }, style = TextStyle(color = ColorProvider(Neutral), fontSize = 11.sp))
+            }
+        } else rows.chunked((rows.size + 3) / 4).forEachIndexed { index, group ->
+            if (index > 0) Spacer(GlanceModifier.height(gap.dp))
+            WidgetHolidayRows(group, gap)
         }
-        if (space.nationalHolidays.isNotEmpty() && space.events.isNotEmpty()) Spacer(GlanceModifier.height(GroupGap.dp))
-        if (space.events.isNotEmpty()) Column(GlanceModifier.fillMaxWidth()) {
-            Text("Próximos eventos", GlanceModifier.height(space.eventTitleHeight.dp), style = TextStyle(color = ColorProvider(Green), fontSize = 14.sp, fontWeight = FontWeight.Bold), maxLines = 2)
-            Spacer(GlanceModifier.height(3.dp))
-            Column(GlanceModifier.fillMaxWidth()) { space.events.forEachIndexed { index, item ->
-                if (index > 0) Spacer(GlanceModifier.height(ItemGap.dp))
-                Column(GlanceModifier.fillMaxWidth()) { when (val value = item.item) {
-                    is WidgetNextEvent.Calendar -> {
-                        Text(value.appointment.description(ZoneId.systemDefault()), GlanceModifier.height(item.detailHeight.dp), style = TextStyle(color = ColorProvider(Aqua), fontSize = 10.sp), maxLines = 3)
-                        Text(value.title, GlanceModifier.height(item.titleHeight.dp), style = TextStyle(color = ColorProvider(Neutral), fontSize = 13.sp), maxLines = 2)
-                    }
-                    is WidgetNextEvent.Personal -> {
-                        Text(value.title, GlanceModifier.height(item.titleHeight.dp), style = TextStyle(color = ColorProvider(Neutral), fontSize = 13.sp), maxLines = 2)
-                        Text(value.occurrence.countdown, GlanceModifier.height(item.detailHeight.dp), style = TextStyle(color = ColorProvider(Amber), fontSize = 11.sp), maxLines = 1)
-                        Text(formatPersonalDate(value.occurrence.date), GlanceModifier.height(item.dateHeight.dp), style = TextStyle(color = ColorProvider(Aqua), fontSize = 10.sp), maxLines = 1)
-                    }
-                } }
-            } }
-        }
+    }
+}
+
+@Composable
+private fun WidgetOtherDates(space: WidgetSpace) {
+    Column(GlanceModifier.fillMaxWidth().height(space.otherSectionHeight.dp)) {
+        Column(GlanceModifier.fillMaxWidth()) { space.otherDates.forEachIndexed { index, item ->
+            if (index > 0) Spacer(GlanceModifier.height(4.dp))
+            Text(item.text, GlanceModifier.fillMaxWidth().height(item.height.dp).semantics {
+                contentDescription = "${item.text}, ${item.holiday.kind.label}"
+            }, style = TextStyle(color = ColorProvider(Amber), fontSize = 11.sp))
+        } }
+    }
+}
+
+@Composable
+private fun WidgetPersonalEvents(space: WidgetSpace) {
+    Column(GlanceModifier.fillMaxWidth().height(space.personalSectionHeight.dp)) {
+        Text("Próximos eventos pessoais", GlanceModifier.height(space.eventTitleHeight.dp), style = TextStyle(color = ColorProvider(Green), fontSize = 14.sp, fontWeight = FontWeight.Bold), maxLines = 2)
+        Spacer(GlanceModifier.height(6.dp))
+        Column(GlanceModifier.fillMaxWidth()) { space.events.forEachIndexed { index, item ->
+            if (index > 0) WidgetSeparator()
+            Column(GlanceModifier.fillMaxWidth()) {
+                Text(item.occurrence.event.title, GlanceModifier.height(item.titleHeight.dp), style = TextStyle(color = ColorProvider(Neutral), fontSize = 13.sp), maxLines = 2)
+                Text(item.occurrence.countdown, GlanceModifier.height(item.detailHeight.dp), style = TextStyle(color = ColorProvider(Aqua), fontSize = 11.sp), maxLines = 1)
+                Text(formatPersonalDate(item.occurrence.date), GlanceModifier.height(item.dateHeight.dp), style = TextStyle(color = ColorProvider(Neutral), fontSize = 10.sp), maxLines = 1)
+            }
+        } }
+    }
+}
+
+/** An explicit container keeps separators from adding three children to their caller. */
+@Composable
+private fun WidgetSeparator() {
+    Column(GlanceModifier.fillMaxWidth().height(SectionSeparation.dp)) {
+        Spacer(GlanceModifier.height(4.dp))
+        Box(GlanceModifier.fillMaxWidth().height(1.dp).background(Divider)) {}
+        Spacer(GlanceModifier.height(4.dp))
     }
 }
 

@@ -1,67 +1,61 @@
 # Validação técnica
 
-Este documento complementa o [README](../README.md) com cobertura, reprodução e limites da validação.
-Os resultados desta revisão foram obtidos em 24/10/2026, incluindo execução no Samsung com Android 16.
+Este documento complementa o [README](../README.md). Revisão de três feriados e fases da Lua: 25/10/2026.
 
-## Resultados
+## Resultados automatizados
 
 | Verificação | Resultado |
 | --- | --- |
-| Testes JVM | 23 aprovados, sem falhas ou testes ignorados |
-| Lint de debug | 0 erros e 15 avisos |
-| Build | APK de debug e APK de testes gerados |
-| Instrumentação no Samsung | 4 testes aprovados; 867 casos renderizados, sem falhas |
-| Calendários reais | Leitura autorizada e coexistência com evento pessoal sintético conferidas |
-| Cadastro real | Criação, edição, alternância anual e exclusão com confirmação exercitadas pela interface |
-| Atualização do widget | Inclusão, edição e exclusão refletidas sem refresh manual |
-| Persistência real | Cadastro e mês do widget preservados após reinstalação do APK e reinício do processo |
-| Navegação na One UI | Setas e retorno ao mês atual conferidos; mês da tela principal independente |
+| Testes JVM | 44 aprovados, sem falhas ou testes ignorados |
+| Lint de debug | 0 erros e 15 avisos preexistentes |
+| Build | APK de debug e APK auxiliar gerados |
+| Widget no Samsung Android 16 | 3 testes aprovados; 805 casos renderizados, sem falhas |
+| Interface lunar no Samsung | Parcial: fonte 1,0 concluída; teste de acessibilidade interrompido na escala 1,3. Layout aprovado pelo usuário; validação adicional dispensada |
+| Dados reais | Nenhuma escrita em dados reais; testes desta rodada usam fixtures e armazenamento isolado |
 
-Os avisos de lint abrangem versões disponíveis, atributos recentes do Android e sugestões de manutenção.
-O relatório completo fica em `app/build/reports/lint-results-debug.html`.
-Não foi executado reinício físico do Samsung nem alterado seu relógio ou fuso para simular a meia-noite.
+Os avisos de lint incluem versões disponíveis, atributos recentes do Android e sugestões de manutenção.
+Relatórios: `app/build/reports/tests/testDebugUnitTest/index.html` e `app/build/reports/lint-results-debug.html`.
 
-## Testes JVM
+## Cobertura JVM
 
-[CalendarTests.kt](../app/src/test/java/com/folhinhautil/app/domain/CalendarTests.kt) preserva as verificações da grade,
-dos 1.164 meses entre 2003 e 2099, categorias de feriados, anos bissextos, ordenação, dia inteiro e fusos.
+- [CalendarTests](../app/src/test/java/com/folhinhautil/app/domain/CalendarTests.kt): grade, 1.164 meses entre 2003 e 2099,
+  finais de semana, bissextos, categorias de feriados e compromissos com horários, dia inteiro e fusos.
+- [PersonalEventsTests](../app/src/test/java/com/folhinhautil/app/domain/PersonalEventsTests.kt): dias corridos locais,
+  hoje, passado, virada de ano, horário de verão, recorrência anual e política de 29/02.
+- [WidgetHolidaysTests](../app/src/test/java/com/folhinhautil/app/domain/WidgetHolidaysTests.kt): referência mensal dos
+  feriados, outubro/novembro/dezembro, dezembro/janeiro, meses anteriores e sem feriados nacionais, limites de anos,
+  uso do provider existente, três primeiros nacionais desde o início do mês, sem duplicação, busca em anos posteriores, seleção das duas últimas datas de cada grupo amarelo e exibição em ordem crescente.
+  Também cobre legendas vermelha, amarela, ambas e nenhuma, sem mudar categorias.
 
-[PersonalEventsTests.kt](../app/src/test/java/com/folhinhautil/app/domain/PersonalEventsTests.kt) cobre:
+- [MoonPhasesTests](../app/src/test/java/com/folhinhautil/app/domain/MoonPhasesTests.kt): 347 instantes oficiais USNO/NASA (2003, 2024, 2026, 2027, 2028, 2050, 2099), oito fases, transições, fusos, bissextos e todos os meses de 2003–2099 em São Paulo e Nova York. Maior erro observado: 45,082 s; tolerância: 120 s.
 
-- Contagem em dias locais, hoje, amanhã, passado e virada de ano.
-- Horário de verão com dia de 23 horas e mudança da data local conforme o fuso.
-- Recorrência anual, data original futura e política de 29/02: 28/02 em anos não bissextos.
-- Datas inválidas, ordenação das ocorrências e limites da navegação mensal.
-- Dezembro/janeiro, estado mensal inválido e retorno à data atual.
-- Exclusividade dos feriados nacionais, hoje e o ano seguinte.
-- Categoria facultativa de 28/10/2026 e categoria comemorativa da Páscoa, sem conversão entre categorias.
-- Reserva de uma posição para cada origem de evento e omissão de cópias exatas de feriados nacionais de dia inteiro.
-
-## Testes instrumentados
+## Instrumentação
 
 O [runner](../app/src/androidTest/java/com/folhinhautil/app/widget/WidgetLayoutInstrumentation.kt) usa instrumentação
-do framework, `RemoteViews` reais e `AppWidgetHostView`, sem acrescentar bibliotecas de testes Android.
+do framework, `RemoteViews` reais e `AppWidgetHostView`, sem novas dependências de testes.
 
-- CRUD e reabertura de um DataStore isolado, inclusive persistência da exclusão.
-- Preferências Glance independentes por identificador e reabertura do estado persistido.
-- Matriz de layout e verificação de dados reais, esta última opcional e somente de leitura.
+1. CRUD e reabertura de DataStore em arquivo isolado no cache, sem acessar registros pessoais reais para escrita.
+2. Estado mensal por instância, dezembro/janeiro, retorno ao mês atual e independência entre identificadores.
+3. Matriz de composição responsiva e inspeção de truncamentos do Glance.
+4. Grade e detalhes lunares em atividade exclusiva do APK debug, com dados sintéticos, sem repositório ou persistência: 31 datas e cinco seleções nas escalas de fonte 1,0, 1,3 e 1,5 (108 verificações).
+5. Verificação opcional, somente de leitura, das agendas e da integridade dos registros pessoais existentes.
 
-A matriz combina três meses com quatro, cinco e seis semanas; escalas de fonte 1,0, 1,15, 1,3 e 1,5;
-e zero, um ou dois eventos de cada origem. Inclui as seis variantes e a dimensão 401,33 × 453,87 dp.
-São 756 combinações, mais 108 renderizações da variante 360 × 440 dp na área real do launcher,
-e um caso sem feriados futuros no limite do catálogo: 865 renderizações sintéticas.
-A conferência opcional das agendas reais acrescenta duas, totalizando 867.
+A matriz combina quatro escalas de fonte (1,0; 1,15; 1,3; 1,5), seis meses (fevereiro, abril, agosto, outubro,
+novembro e dezembro de 2026), zero a dois eventos pessoais e nove dimensões.
+As oito variantes incluem 400 × 450 dp, selecionada para a área de 401,33 × 453,87 dp do Samsung.
+Inclui a renderização dessa variante dentro da área maior do launcher: 720 combinações.
+Mais 12 casos verificam nomes extensos, 72 combinam seleções de 0, 1, 2, 3, 5 e 12 feriados com calendário de seis semanas, e um exercita o limite superior do catálogo: 805.
+A conferência de dados reais acrescenta dois, totalizando 807 renderizações.
 
-São verificados dias, finais de semana, marcadores, cores semânticas, legenda em uma linha,
-seções presentes somente quando preenchidas, textos dos eventos, limites, sobreposição e ocupação vertical.
-O log do processo é inspecionado por truncamentos de `Column` e `Row`, sem publicar seu conteúdo.
-O Samsung estava com ajuste de peso de fonte 300; a medição considera esse negrito de acessibilidade.
+São verificados calendário completo, cores, marcadores, legendas condicionais, seleção dos três primeiros nacionais desde o primeiro dia do mês, aviso de espaço insuficiente com descrição acessível completa,
+datas amarelas do mês, ordem crescente, contagens independentes da navegação, separadores e ocultação de seções vazias.
+Os testes inspecionam limites dos textos e dos contêineres ancestrais, sobreposição, reticências indevidas e
+mensagens de truncamento de `Column` e `Row`. Títulos pessoais podem usar até duas linhas, com reticências intencionais.
 
-As fixtures não são inseridas no Calendar Provider. O teste de persistência usa arquivo separado no cache.
-O teste de estado usa contexto com diretório isolado e identificadores sintéticos.
-A reflexão necessária para construir esses identificadores no Glance 1.1.1 existe somente no teste.
-Na interface real foi criado um registro identificado como validação, removido ao concluir os testes.
-Capturas exportadas automaticamente usam exclusivamente fixtures.
+A construção dos identificadores sintéticos usa reflexão somente no teste, por limitação do Glance 1.1.1.
+As preferências desses identificadores ficam em diretório de cache isolado.
+Fixtures não são inseridas no Calendar Provider nem no DataStore usado pelo usuário.
+As imagens exportadas automaticamente contêm exclusivamente dados sintéticos.
 
 ### Reprodução
 
@@ -75,50 +69,72 @@ adb install -r .\app\build\outputs\apk\androidTest\debug\app-debug-androidTest.a
 adb shell am instrument -w -r com.folhinhautil.app.test/com.folhinhautil.app.widget.WidgetLayoutInstrumentation
 ```
 
-Para acrescentar a conferência das agendas já autorizadas e selecionadas no aparelho:
+Para acrescentar a leitura das agendas já autorizadas e selecionadas:
 
 ```powershell
 adb shell am instrument -w -r -e checkDeviceWidget true com.folhinhautil.app.test/com.folhinhautil.app.widget.WidgetLayoutInstrumentation
 adb uninstall com.folhinhautil.app.test
 ```
 
-A conferência adicional informa somente se existem compromissos válidos; não exige um título específico.
-Os 867 casos são renderizações, não 867 métodos de teste. Sem a opção adicional são três testes e 865 casos.
+Sem a opção adicional, são quatro testes: 805 renderizações de widget e 108 verificações da interface lunar. A checagem opcional acrescenta um teste e duas renderizações de widget.
 O APK auxiliar pode ser removido também após a execução padrão.
+Não confundir o número de renderizações com o número de métodos de teste.
 
-## Decisões de manutenção
+## Decisões de apresentação
 
-- Cada instância mantém o mês em Preferences Glance; callbacks atualizam o estado e solicitam sua recomposição.
-- Eventos pessoais usam Preferences DataStore, com JSON estruturado e versão de esquema 1.
-- Os dados são locais e independentes das agendas Android. Não há cópia automática nem escrita no Calendar Provider.
-- O aplicativo desabilita backup; desinstalação apaga os registros pessoais.
-- A composição observa o fluxo de eventos pessoais para refletir alterações também em sessões Glance ativas.
-- Mudanças de data, hora e fuso invalidam a composição para recalcular as ocorrências, preservando o mês escolhido.
-- A altura dos textos considera SP, escala de fonte, peso de acessibilidade e arredondamento em pixels.
-- A grade tem prioridade; depois vêm até dois feriados nacionais e os eventos que couberem, com títulos em até duas linhas.
-- A legenda extensa só é usada quando cabe; a versão curta mantém as mesmas categorias e cores.
-- Nenhuma `Column` ou `Row` deve exceder dez filhos diretos; funções composable não criam contêineres automaticamente.
-- `LocalSize` em modo responsivo é uma variante predefinida. O host pode oferecer uma área maior.
-- O teste deve preservar os parâmetros de layout do `RemoteViews`; medir diretamente o filho com altura exata pode ocultar falhas.
+- O cabeçalho acompanha a área do calendário. Grade e feriados ficam lado a lado quando a largura permite.
+- A lista inclui exatamente os três primeiros feriados nacionais desde o primeiro dia do mês exibido, mesmo quando já passaram em relação a hoje.
+- A busca continua pelos anos seguintes até completar três, sem duplicação, respeitando 2099. No último mês do catálogo só há o Natal: não são inventados feriados de 2100.
+- A coluna reduz primeiro os intervalos sem diminuir os números da grade. Se necessário, usa a lista abaixo do calendário.
+- Os títulos “Feriados” e “Pontos facultativos e outras datas” foram removidos. As legendas e cores permanecem. As datas amarelas podem ocupar a direita, abaixo dos nacionais, separadas por linha sutil; se essa posição perder eventos pessoais ou não couber com legibilidade, ficam abaixo do calendário. No cenário Samsung de outubro com fonte 1,15, os dois eventos pessoais voltam a caber sem reduzir a fonte da grade.
+- Quando a lista completa não cabe, o aviso “N feriados · amplie” ocupa a faixa inferior do calendário. Sua descrição acessível inclui todas as datas e nomes selecionados. Não há descarte silencioso de feriados.
+- A lista é agrupada em contêineres com até sete filhos diretos, inclusive para seleções maiores que dez itens.
+- A seção amarela seleciona as duas últimas datas facultativas e as duas últimas das demais categorias não nacionais
+  do mês exibido. O conjunto é apresentado em ordem crescente, preservando as classificações.
+- As legendas dependem dos indicadores do próprio mês, não das datas futuras mostradas na coluna lateral.
+- O calendário tem prioridade. As seções inferiores mantêm ambas as origens de informação quando possível;
+  depois preservam até dois eventos pessoais e encaixam as datas amarelas completas que couberem.
+- Dimensões menores e fontes grandes podem reduzir as quantidades ou usar a disposição em uma coluna.
+- A tipografia do calendário foi preservada. A medição considera escala e negrito de acessibilidade.
+- Há reserva de dois dp na largura medida para evitar que arredondamentos independentes dos filhos do
+  `RemoteViews` façam uma linha caber na medição e quebrar durante a renderização.
+- Cada função de separador cria seu contêiner. Nenhuma `Row` ou `Column` ultrapassa dez filhos diretos.
+- O host pode oferecer uma área maior que `LocalSize`; os testes preservam os parâmetros do `RemoteViews`.
 
-Não há garantia de atualização pontual à meia-noite: o Android e a economia de bateria podem adiar o trabalho.
-Meses de seis semanas com fontes grandes podem deixar espaço somente para o calendário e os feriados.
-Foram inspecionadas imagens sintéticas produzidas no Samsung, incluindo os formatos compacto, vertical e fonte ampliada.
+## Evidências visuais no Samsung
 
-## Atualização das agendas Android
+Nesta rodada, foram inspecionadas as imagens sintéticas de outubro de 2026 com dois eventos pessoais e sem os títulos redundantes, novembro com três feriados e dois eventos, e formato compacto com aviso de espaço insuficiente. Também foi conferida uma captura lunar com fonte 1,3: grade, fase selecionada e feriado legíveis. O usuário aprovou o layout e encerrou a validação no aparelho. As imagens ficam em `app/build/qa/`, ignorado pelo Git.
+A imagem `widget-all-holidays-november.png` é uma renderização instrumentada, não uma captura da One UI.
+A captura real da tela inicial com a lista completa ficou pendente: o usuário estava usando o aparelho e
+solicitou concluir com as imagens instrumentadas.
 
-O mecanismo de leitura e atualização do Google/Android foi preservado.
-O aplicativo reconsulta ao retornar ao primeiro plano, pelo refresh e por mudanças observadas no Calendar Provider.
-A consulta por minuto ocorre somente enquanto a atividade está em primeiro plano.
-O widget solicita atualização periódica a cada hora, respeitando o agendamento do Android.
+No marco anterior foram conferidos navegação e os quatro estados das legendas na One UI.
+Essas capturas anteriores não comprovam a nova coluna com três feriados.
+Nenhum registro pessoal real foi criado, editado ou excluído durante os testes desta correção.
+## Persistência, atualização e limitações
 
-Permanece um risco específico dos snapshots de calendários:
-`provideGlance` carrega o snapshot antes de `provideContent`, e uma chamada de `updateAll`
-não reinicia necessariamente esse carregamento se a sessão estiver ativa.
-Dados das agendas podem permanecer anteriores temporariamente; essa investigação continua separada.
-A observação do DataStore de eventos pessoais não refatora esse mecanismo.
+A persistência dos eventos pessoais, o esquema JSON versão 1, a política anual e as preferências de navegação
+não foram alterados nesta revisão. As contagens continuam usando a data local real.
+O widget observa o fluxo de eventos pessoais e recebe invalidações em mudanças de data, hora e fuso.
+O Android pode adiar trabalho periódico; não há garantia de execução pontual à meia-noite.
+Não foram alterados o relógio ou o fuso do Samsung nem realizado reinício físico nesta revisão.
 
-Em uma validação específica dessa integração, conferir alterações de permissão, seleção de agendas e eventos
-durante e após uma sessão Glance ativa. Não foi repetida toda essa bateria manual neste marco.
-Não forçar a parada como simulação de segundo plano normal, pois isso afeta o agendamento do Android.
-Não publicar títulos, contas, dados pessoais ou capturas privadas em logs e documentação.
+O acesso aos calendários Android permanece na tela principal, com os mesmos filtros e origem.
+A nova apresentação do widget é exclusiva para feriados, outras datas do catálogo e eventos pessoais locais.
+O repositório de calendários e as definições legais de feriados foram preservados.
+
+Fica mantido como referência para investigação separada o risco de snapshots observado no widget anterior:
+carregar dados antes de `provideContent` e chamar `updateAll` não garante nova consulta durante uma sessão ativa.
+O widget atual não carrega snapshots de agendas Android; a nota deve ser considerada se essa apresentação
+for reintroduzida. O mecanismo do CalendarRepository não foi refatorado.
+
+Capturas reais devem permanecer locais quando contiverem informações pessoais.
+Não publicar títulos, contas, registros pessoais ou logs privados no repositório.
+
+## Execução desta revisão lunar
+
+`connectedDebugAndroidTest --offline` não iniciou testes: o plugin UTP `android-test-plugin-host-additional-test-output:31.11.1` não estava no cache. Os APKs compilados são instalados com `adb install -r` e a mesma instrumentação é executada diretamente pelo ADB. Nenhum timeout foi ampliado para mascarar falhas. O widget passou em 805 renderizações, além dos testes de persistência isolada e navegação. A execução lunar passou pela escala 1,0, mas falhou na leitura de texto de fase após selecionar 12/10 com fonte 1,3: a captura visual mostrava “Lua crescente”, enquanto a árvore de acessibilidade ainda devolvia “Lua nova”. O teste recebeu atualização explícita do cache de acessibilidade, cuja reexecução no aparelho ficou pendente quando o usuário aprovou o layout e dispensou testes adicionais. Não se declara aprovação das 108 verificações lunares.
+
+Para executar separadamente, acrescente `-e section widget` (três testes) ou `-e section moon` (um teste) ao comando de instrumentação.
+
+A tela `MoonCalendarPreviewActivity` existe somente em `src/debug`, não é exportada e não acessa CalendarContract, DataStore ou preferências do usuário. Ela reutiliza a grade e os detalhes reais com fixtures de compromissos e feriados. Não integra a versão release.
