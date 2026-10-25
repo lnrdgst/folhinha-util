@@ -76,7 +76,7 @@ Relatórios gerados em:
 - `app/build/reports/tests/testDebugUnitTest/index.html`
 - `app/build/reports/lint-results-debug.html`
 
-A cobertura, os testes instrumentados e as evidências estão em [docs/VALIDACAO.md](docs/VALIDACAO.md).
+A cobertura, os testes instrumentados e as evidências estão em [docs/VALIDACAO.md](docs/VALIDACAO.md). A revisão da coluna lateral e do seletor de datas está em [docs/WIDGET-DATAS.md](docs/WIDGET-DATAS.md).
 
 ### 3. Gerar o APK de debug
 
@@ -107,15 +107,15 @@ A coluna lateral, sem título redundante, mostra os três primeiros feriados nac
 Em tamanhos insuficientes, um aviso “N feriados · amplie” substitui a lista; sua descrição acessível contém todas as datas e nomes, sem alterar a seleção.
 As contagens dos eventos pessoais sempre partem de hoje, independentemente da navegação.
 
-Em **Eventos pessoais**, informe título e data e, se desejar, ative **Repetir anualmente**.
+Em **Eventos pessoais**, informe o título e toque em **Data do evento** ou no ícone de calendário para selecionar dia, mês e ano. O seletor Material 3 permite escolher o ano diretamente, aceita datas passadas e só aplica a seleção ao confirmar; cancelar preserva a data anterior. Se desejar, ative **Repetir anualmente**.
 Eventos anuais de 29/02 ocorrem em 28/02 nos anos não bissextos; após a data, passam à próxima ocorrência.
 Eventos não anuais passados permanecem no cadastro, mas saem da lista de próximos eventos.
 Os registros ficam somente no aparelho, sem sincronização na nuvem; desinstalar o app apaga esses dados.
 
 O widget prioriza o calendário completo, depois os feriados nacionais e os eventos que couberem.
 A seção **Próximos eventos pessoais** mostra somente registros locais; os compromissos Google/Android continuam na tela principal.
-O grupo de datas amarelas, sem título redundante, seleciona as duas últimas datas de cada grupo no mês exibido (até dois pontos facultativos e duas outras datas), em ordem crescente.
-As categorias e os indicadores amarelos são preservados; essas datas ficam separadas dos feriados nacionais por uma linha sutil. Quando cabe sem perder eventos pessoais, o grupo amarelo ocupa a coluna direita; nos demais tamanhos, fica abaixo do calendário.
+O grupo de datas amarelas seleciona as duas últimas datas de cada grupo no mês exibido (até dois pontos facultativos e duas outras datas), em ordem crescente.
+As categorias e os indicadores amarelos são preservados; essas datas ficam separadas dos feriados nacionais por uma linha sutil. Nas variantes laterais, o grupo amarelo fica sempre na direita, abaixo dos nacionais, com o título “Pontos facultativos e outras datas” somente quando há itens. Cabeçalho, grade e legenda compacta ficam na esquerda. Tamanhos menores mantêm a alternativa em uma coluna.
 O número de itens nas seções inferiores diminui quando o tamanho ou a fonte não permitem mostrar todos com legibilidade.
 
 ## Fases da Lua

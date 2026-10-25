@@ -34,7 +34,7 @@ class PersonalEventsActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFB6E4BE), onPrimary = Color(0xFF101513),
                 background = Color(0xFF101513), surface = Color(0xFF1B231F))) {
-                Surface(Modifier.fillMaxSize()) { PersonalEventsScreen { finish() } }
+                Surface(Modifier.fillMaxSize()) { PersonalEventsScreen(back = { finish() }) }
             }
         }
     }
@@ -43,9 +43,10 @@ class PersonalEventsActivity : ComponentActivity() {
 private data class PersonalListState(val events: List<PersonalEvent> = emptyList(), val ready: Boolean = false, val error: Boolean = false)
 
 @Composable
-private fun PersonalEventsScreen(back: () -> Unit) {
+internal fun PersonalEventsScreen(back: () -> Unit, repositoryOverride: PersonalEventsRepository? = null,
+    onSaved: (suspend () -> Unit)? = null) {
     val context = LocalContext.current
-    val repository = remember { PersonalEventsRepository(context) }
+    val repository = repositoryOverride ?: remember { PersonalEventsRepository(context) }
     val states = remember { repository.events.map { PersonalListState(it, ready = true) }
         .catch { emit(PersonalListState(error = true)) } }
     val state by states.collectAsStateWithLifecycle(PersonalListState())
@@ -66,7 +67,7 @@ private fun PersonalEventsScreen(back: () -> Unit) {
         validation = null; editorOpen = true
     }
     suspend fun updateWidget() {
-        try { FolhinhaWidget().updateAll(context) }
+        try { if (onSaved != null) onSaved() else FolhinhaWidget().updateAll(context) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: RuntimeException) { operationError = "Alteração salva. O widget será atualizado na próxima atualização permitida." }
     }
@@ -97,7 +98,9 @@ private fun PersonalEventsScreen(back: () -> Unit) {
     if (editorOpen) AlertDialog(onDismissRequest = { if (!busy) editorOpen = false }, title = { Text(if (editingId == null) "Cadastrar evento" else "Editar evento") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(title, { title = it.take(120) }, label = { Text("Título") }, singleLine = true, enabled = !busy)
-            OutlinedTextField(dateText, { dateText = it.take(10) }, label = { Text("Data (dd/MM/aaaa)") }, singleLine = true, enabled = !busy)
+            PersonalEventDateField(parsePersonalDate(dateText) ?: LocalDate.now(), enabled = !busy) {
+                dateText = formatPersonalDate(it)
+            }
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Checkbox(annual, { annual = it }, enabled = !busy)
                 Text("Repetir anualmente")

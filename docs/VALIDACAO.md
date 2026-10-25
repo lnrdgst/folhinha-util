@@ -2,6 +2,8 @@
 
 Este documento complementa o [README](../README.md). Revisão de três feriados e fases da Lua: 25/10/2026.
 
+A revisão posterior da coluna lateral e do seletor de datas, com resultados próprios, está em [WIDGET-DATAS.md](WIDGET-DATAS.md). Os resultados lunares abaixo registram a rodada anterior.
+
 ## Resultados automatizados
 
 | Verificação | Resultado |

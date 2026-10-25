@@ -84,6 +84,14 @@ class WidgetHolidaysTests {
         assertEquals(listOf(HolidayKind.LOCAL_RELIGIOUS, HolidayKind.COMMEMORATIVE, HolidayKind.OPTIONAL), result.map { it.kind })
         assertTrue(result.none { it.kind == HolidayKind.NATIONAL })
     }
+    @Test fun march2027KeepsReligiousAndCommemorativeDatesSeparateFromNationals() {
+        val month = YearMonth.of(2027,3)
+        val other = widgetOtherDates(month)
+        assertEquals(listOf(LocalDate.of(2027,3,26),LocalDate.of(2027,3,28)),other.map { it.date })
+        assertEquals(listOf(HolidayKind.LOCAL_RELIGIOUS,HolidayKind.COMMEMORATIVE),other.map { it.kind })
+        assertEquals(listOf(LocalDate.of(2027,4,21),LocalDate.of(2027,5,1),LocalDate.of(2027,9,7)),
+            widgetNationalHolidays(month,today).map { it.date })
+    }
     @Test fun selectionHasSeparateLimitOfTwoForEachGroup() {
         val provider = object : HolidayProvider {
             override fun forYear(year: Int) = (1..3).flatMap { offset ->

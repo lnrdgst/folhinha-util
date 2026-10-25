@@ -33,6 +33,8 @@ class WidgetLayoutInstrumentation : Instrumentation() {
     private var checkDevice = false
     private var onlyLunar = false
     private var onlyWidget = false
+    private var onlyDate = false
+    private var dateCases = 0
     private var cases = 0
     private var lunarCases = 0
     private var description = "initialization"
@@ -41,10 +43,11 @@ class WidgetLayoutInstrumentation : Instrumentation() {
         checkDevice = arguments?.getString("checkDeviceWidget") == "true"
         onlyLunar = arguments?.getString("section") == "moon"
         onlyWidget = arguments?.getString("section") == "widget"
+        onlyDate = arguments?.getString("section") == "date"
         start()
     }
     override fun onStart() {
-        val total = if (onlyLunar) 1 else if (onlyWidget) 3 else if (checkDevice) 5 else 4
+        val total = if (onlyLunar || onlyDate) 1 else if (onlyWidget) 3 else if (checkDevice) 6 else 5
         var failures = 0
         fun test(index: Int, name: String, body: () -> Unit) {
             fun status(code: Int, detail: String = "") {
@@ -62,13 +65,19 @@ class WidgetLayoutInstrumentation : Instrumentation() {
                 status(-2, "case=$cases; $description; failure=${failure.javaClass.simpleName}; line=${failure.stackTrace.firstOrNull { it.className == javaClass.name }?.lineNumber}")
             }
         }
-        if (!onlyLunar) {
+        if (!onlyLunar && !onlyDate) {
         test(1, "personalCrudAndDurableStorage") { runBlocking { checkPersistence() } }
         test(2, "independentWidgetMonthState") { runBlocking { checkNavigation() } }
         test(3, "remoteViewsLayoutMatrix") { runBlocking { renderMatrix() } }
         }
-        if (!onlyWidget) test(if (onlyLunar) 1 else 4, "lunarCalendarAndSelectedDay") { lunarCases = com.folhinhautil.app.runMoonCalendarChecks(this) { description = it } }; if (checkDevice) test(5, "selectedCalendarsAndUnchangedPersonalData") { runBlocking { checkSamsungData() } }
-        finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "\nRendered widget cases: $cases; lunar checks: $lunarCases; failures: $failures\n") })
+        if (!onlyWidget && !onlyDate) test(if (onlyLunar) 1 else 4, "lunarCalendarAndSelectedDay") {
+            lunarCases = com.folhinhautil.app.runMoonCalendarChecks(this) { description = it }
+        }
+        if (!onlyWidget && !onlyLunar) test(if (onlyDate) 1 else 5, "personalEventDatePicker") {
+            dateCases = com.folhinhautil.app.runPersonalDateChecks(this) { description = it }
+        }
+        if (checkDevice) test(6, "selectedCalendarsAndUnchangedPersonalData") { runBlocking { checkSamsungData() } }
+        finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "\nRendered widget cases: $cases; lunar checks: $lunarCases; date checks: $dateCases; failures: $failures\n") })
     }
 
     private suspend fun checkPersistence() {
@@ -143,7 +152,7 @@ class WidgetLayoutInstrumentation : Instrumentation() {
             PersonalEvent("annual", "Evento pessoal de validação", today.minusYears(1), true))
         for (scale in listOf(1.3f, 1f, 1.15f, 1.5f)) {
             val ctx = targetContext.createConfigurationContext(Configuration(targetContext.resources.configuration).apply { fontScale = scale })
-            for (month in listOf(YearMonth.of(2026, 2), YearMonth.of(2026, 4), YearMonth.of(2026, 8), YearMonth.of(2026, 10), YearMonth.of(2026, 11), YearMonth.of(2026, 12))) {
+            for (month in listOf(YearMonth.of(2026, 2), YearMonth.of(2026, 4), YearMonth.of(2026, 8), YearMonth.of(2026, 10), YearMonth.of(2026, 11), YearMonth.of(2026, 12), YearMonth.of(2027, 3))) {
                 val holidays = BrazilianHolidayProvider().forYear(month.year)
                 for (count in 0..2) for (size in WidgetSizes + samsung) {
                     val personal = fixtures.take(count)
@@ -156,7 +165,11 @@ class WidgetLayoutInstrumentation : Instrumentation() {
                         check(space.sideBySide)
                         check(space.selectedHolidays.size == widgetNationalHolidays(month, today).size)
                         check(space.holidaySummary == null)
-                        if (month.monthValue == 10) check(space.events.size == count)
+                        if (month == YearMonth.of(2026,10) || month == YearMonth.of(2027,3)) {
+                            check(space.otherDatesInSidebar)
+                            check(space.otherDates.map { it.holiday } == widgetOtherDates(month))
+                            check(space.events.size == count)
+                        }
                         if (count > 0) check(space.events.isNotEmpty())
                     }
                     if (size == bound) {
@@ -165,6 +178,8 @@ class WidgetLayoutInstrumentation : Instrumentation() {
                         assertLayout(ctx, hosted, month, today, holidays, personal, space)
                         if (month.monthValue == 10 && scale == 1.15f && count == 2)
                             saveFixturePreview(hosted, "widget-dynamic-samsung.png")
+                        if (month == YearMonth.of(2027,3) && scale == 1.15f && count == 2)
+                            saveFixturePreview(hosted, "widget-sidebar-march.png")
                         if (month.monthValue == 11 && scale == 1.15f && count == 2)
                             saveFixturePreview(hosted, "widget-all-holidays-november.png")
                         if (month.monthValue == 8 && scale == 1.5f && count == 2)
@@ -284,7 +299,8 @@ class WidgetLayoutInstrumentation : Instrumentation() {
         if (month == YearMonth.of(2026, 10)) check(all.single { it.text.toString() == "28·" }.currentTextColor == 0xFFECC88B.toInt())
         check(all.none { it.text.toString() == "Feriados" })
         check(all.any { it.text.toString() == "Próximos eventos pessoais" } == space.events.isNotEmpty())
-        check(all.none { it.text.toString() == "Pontos facultativos e outras datas" })
+        check(all.any { it.text.toString() == "Pontos facultativos e outras datas" } == space.otherDates.isNotEmpty())
+        if (space.sideBySide && space.otherDates.isNotEmpty()) check(space.otherDatesInSidebar)
         check(space.otherDates.map { it.holiday } == widgetOtherDates(month).take(space.otherDates.size))
         check(space.otherDates.count { it.holiday.kind == HolidayKind.OPTIONAL } <= 2)
         check(space.otherDates.count { it.holiday.kind != HolidayKind.OPTIONAL } <= 2)
@@ -363,6 +379,9 @@ class WidgetLayoutInstrumentation : Instrumentation() {
             val line = bounds(root, vertical.single())
             check(bounds(root, all.first { it.text.toString() == space.nationalHolidays.first().dateLabel }).left > line.right)
             check(bounds(root, all.first { it.text.toString() == WeekLabels.first() }).right < line.left)
+            check(bounds(root, all.single { it.text.toString() == space.monthLabel }).right < line.left)
+            if (redLegend != null) check(bounds(root,redLegend).right < line.left)
+            if (amberLegend != null) check(bounds(root,amberLegend).right < line.left)
             if (space.otherDatesInSidebar) {
                 val yellow = bounds(root, all.first { it.text.toString() == space.otherDates.first().text })
                 check(yellow.left > line.right)
