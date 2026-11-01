@@ -9,8 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.folhinhautil.app.data.*
 import com.folhinhautil.app.domain.*
-import com.folhinhautil.app.widget.FolhinhaWidget
-import androidx.glance.appwidget.updateAll
+import com.folhinhautil.app.widget.refreshWidgetsForClock
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -64,7 +63,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             val snapshot = repository.load(mutableState.value.month)
             mutableState.value = mutableState.value.copy(snapshot = snapshot, loading = false)
             // Each widget reads current data directly. No event data is stored in preferences or logs.
-            try { FolhinhaWidget().updateAll(getApplication()) } catch (_: RuntimeException) { }
+            try { refreshWidgetsForClock(getApplication()) } catch (_: RuntimeException) { }
         }
     }
     private fun stopObserving() {

@@ -16,9 +16,13 @@ Um aplicativo nativo de calendário pessoal, com tema escuro e foco em simplicid
 - Seleção das agendas exibidas, com suporte a ocorrências recorrentes e eventos de dia inteiro.
 - Próximas datas importantes: compromissos das agendas em ordem cronológica e atualização manual pelo ícone de refresh.
 - Widget responsivo com navegação mensal independente por instância e retorno ao mês atual pelo título.
-- Calendário e feriados nacionais lado a lado no widget, com datas facultativas/comemorativas e até dois eventos pessoais abaixo, conforme o espaço.
+- Coluna do widget configurável por instância: até duas categorias ordenadas (feriados, outras datas ou agendas Android/Google), com até três registros em cada.
+- Virada automática do mês com recuperação de atrasos e navegação manual preservada até a próxima virada.
+- Quatro fases principais da Lua opcionais no widget; até dois eventos pessoais permanecem no rodapé.
 - Eventos pessoais locais: cadastro, edição, exclusão com confirmação e repetição anual opcional.
 - Contagem regressiva em dias corridos, com indicação de eventos que acontecem hoje.
+
+Detalhes desta entrega: [virada e personalização do widget](docs/WIDGET-PERSONALIZACAO.md).
 
 ## Capturas de tela
 

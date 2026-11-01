@@ -25,12 +25,21 @@ class NavigateMonthAction : ActionCallback {
 internal suspend fun changeWidgetMonth(context: Context, id: GlanceId, delta: Int, today: LocalDate = LocalDate.now()) {
     updateAppWidgetState(context, id) { prefs ->
         prefs[ViewedMonth] = (if (delta == 0) widgetMonth(null, today)
-            else moveWidgetMonth(widgetMonth(prefs[ViewedMonth], today), delta)).toString()
+            else moveWidgetMonth(resolvedWidgetMonth(prefs[ViewedMonth], prefs[CurrentMonthAnchor], today), delta)).toString()
+        prefs[CurrentMonthAnchor] = java.time.YearMonth.from(today).toString()
+    }
+}
+
+internal suspend fun reconcileWidgetMonth(context: Context, id: GlanceId, today: LocalDate = LocalDate.now()) {
+    updateAppWidgetState(context, id) { prefs ->
+        prefs[ViewedMonth] = resolvedWidgetMonth(prefs[ViewedMonth], prefs[CurrentMonthAnchor], today).toString()
+        prefs[CurrentMonthAnchor] = java.time.YearMonth.from(today).toString()
     }
 }
 
 internal suspend fun refreshWidgetsForClock(context: Context) {
     GlanceAppWidgetManager(context).getGlanceIds(FolhinhaWidget::class.java).forEach { id ->
+        reconcileWidgetMonth(context, id)
         updateAppWidgetState(context, id) { it[ClockRevision] = System.currentTimeMillis() }
     }
     FolhinhaWidget().updateAll(context)

@@ -31,6 +31,7 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalGlanceRemoteViewsApi::class)
 class WidgetLayoutInstrumentation : Instrumentation() {
     private var checkDevice = false
+    private var onlyConfiguration = false
     private var onlyLunar = false
     private var onlyWidget = false
     private var onlyDate = false
@@ -41,13 +42,14 @@ class WidgetLayoutInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         checkDevice = arguments?.getString("checkDeviceWidget") == "true"
+        onlyConfiguration = arguments?.getString("section") == "configuration"
         onlyLunar = arguments?.getString("section") == "moon"
         onlyWidget = arguments?.getString("section") == "widget"
         onlyDate = arguments?.getString("section") == "date"
         start()
     }
     override fun onStart() {
-        val total = if (onlyLunar || onlyDate) 1 else if (onlyWidget) 3 else if (checkDevice) 6 else 5
+        val total = if (onlyLunar || onlyDate || onlyConfiguration) 1 else if (onlyWidget) 3 else if (checkDevice) 6 else 5
         var failures = 0
         fun test(index: Int, name: String, body: () -> Unit) {
             fun status(code: Int, detail: String = "") {
@@ -61,19 +63,21 @@ class WidgetLayoutInstrumentation : Instrumentation() {
             try { body(); status(0) }
             catch (failure: Throwable) {
                 failures++
-                if (description.startsWith("synthetic lunar")) description += "; " + failure.message
+                if (description.startsWith("synthetic")) description += "; " + failure.message + "; at=" +
+                    failure.stackTrace.filter { it.className.startsWith("com.folhinhautil.app") }.take(4).joinToString { it.className.substringAfterLast('.') + ":" + it.lineNumber }
                 status(-2, "case=$cases; $description; failure=${failure.javaClass.simpleName}; line=${failure.stackTrace.firstOrNull { it.className == javaClass.name }?.lineNumber}")
             }
         }
-        if (!onlyLunar && !onlyDate) {
+        if (onlyConfiguration) test(1, "configurableSidebarAndLunarIndicators") { runBlocking { checkConfigurationMatrix() } }
+        if (!onlyLunar && !onlyDate && !onlyConfiguration) {
         test(1, "personalCrudAndDurableStorage") { runBlocking { checkPersistence() } }
         test(2, "independentWidgetMonthState") { runBlocking { checkNavigation() } }
-        test(3, "remoteViewsLayoutMatrix") { runBlocking { renderMatrix() } }
+        test(3, "remoteViewsLayoutMatrix") { runBlocking { renderMatrix(); checkConfigurationMatrix() } }
         }
-        if (!onlyWidget && !onlyDate) test(if (onlyLunar) 1 else 4, "lunarCalendarAndSelectedDay") {
+        if (!onlyWidget && !onlyDate && !onlyConfiguration) test(if (onlyLunar) 1 else 4, "lunarCalendarAndSelectedDay") {
             lunarCases = com.folhinhautil.app.runMoonCalendarChecks(this) { description = it }
         }
-        if (!onlyWidget && !onlyLunar) test(if (onlyDate) 1 else 5, "personalEventDatePicker") {
+        if (!onlyWidget && !onlyLunar && !onlyConfiguration) test(if (onlyDate) 1 else 5, "personalEventDatePicker") {
             dateCases = com.folhinhautil.app.runPersonalDateChecks(this) { description = it }
         }
         if (checkDevice) test(6, "selectedCalendarsAndUnchangedPersonalData") { runBlocking { checkSamsungData() } }
@@ -140,6 +144,22 @@ class WidgetLayoutInstrumentation : Instrumentation() {
         changeWidgetMonth(isolated, one, -1, today); check(state(one) == "2026-12")
         changeWidgetMonth(isolated, one, 0, LocalDate.of(2026, 10, 24)); check(state(one) == "2026-10")
         check(state(two) == "2026-12")
+        changeWidgetMonth(isolated, one, 0, LocalDate.of(2026, 10, 31))
+        repeat(3) { changeWidgetMonth(isolated, one, 1, LocalDate.of(2026, 10, 31)) }
+        reconcileWidgetMonth(isolated, one, LocalDate.of(2026, 11, 1))
+        check(state(one) == "2026-11")
+        repeat(2) { changeWidgetMonth(isolated, one, -1, LocalDate.of(2026, 11, 10)) }
+        reconcileWidgetMonth(isolated, one, LocalDate.of(2026, 11, 30))
+        check(state(one) == "2026-09")
+        reconcileWidgetMonth(isolated, one, LocalDate.of(2026, 12, 3))
+        check(state(one) == "2026-12")
+        for (categories in listOf(emptyList(), listOf(SidebarCategory.CALENDAR),
+            listOf(SidebarCategory.CALENDAR, SidebarCategory.OTHER_DATES))) {
+            val prefs = WidgetPreferences(categories, false)
+            saveWidgetPreferences(isolated, one, prefs)
+            check(getAppWidgetState(isolated, PreferencesGlanceStateDefinition, reopened).widgetPreferences() == prefs)
+            check(getAppWidgetState(isolated, PreferencesGlanceStateDefinition, two).widgetPreferences() == WidgetPreferences())
+        }
     }
 
     private suspend fun renderMatrix() {
@@ -167,7 +187,7 @@ class WidgetLayoutInstrumentation : Instrumentation() {
                         check(space.holidaySummary == null)
                         if (month == YearMonth.of(2026,10) || month == YearMonth.of(2027,3)) {
                             check(space.otherDatesInSidebar)
-                            check(space.otherDates.map { it.holiday } == widgetOtherDates(month))
+                            check(space.otherDates.map { it.holiday } == widgetOtherDates(month).take(3).take(space.otherDates.size))
                             check(space.events.size == count)
                         }
                         if (count > 0) check(space.events.isNotEmpty())
@@ -237,6 +257,61 @@ class WidgetLayoutInstrumentation : Instrumentation() {
         reader.use { check(it.lineSequence().none { line -> line.contains("Truncated Column container") || line.contains("Truncated Row container") }) }
     }
 
+    private suspend fun checkConfigurationMatrix() {
+        val options = listOf(emptyList(), listOf(SidebarCategory.HOLIDAYS), listOf(SidebarCategory.OTHER_DATES),
+            listOf(SidebarCategory.CALENDAR), listOf(SidebarCategory.HOLIDAYS, SidebarCategory.OTHER_DATES),
+            listOf(SidebarCategory.OTHER_DATES, SidebarCategory.HOLIDAYS),
+            listOf(SidebarCategory.CALENDAR, SidebarCategory.OTHER_DATES),
+            listOf(SidebarCategory.OTHER_DATES, SidebarCategory.CALENDAR),
+            listOf(SidebarCategory.CALENDAR, SidebarCategory.HOLIDAYS),
+            listOf(SidebarCategory.HOLIDAYS, SidebarCategory.CALENDAR))
+        fun allViews(view: View): List<View> = buildList {
+            add(view)
+            if (view is ViewGroup) for (i in 0 until view.childCount) addAll(allViews(view.getChildAt(i)))
+        }
+        for (scale in listOf(1.5f, 1f)) for (month in listOf(YearMonth.of(2026, 8), YearMonth.of(2026, 2), YearMonth.of(2026, 11))) {
+            val ctx = targetContext.createConfigurationContext(Configuration(targetContext.resources.configuration).apply { fontScale = scale })
+            val today = month.atDay(1)
+            val holidays = BrazilianHolidayProvider().forYear(month.year)
+            val events = (1..5).map { day -> Appointment(day.toLong(), 1, "Compromisso de validação $day",
+                month.atDay(day).atTime(10, 0).atZone(ZoneId.systemDefault()).toInstant(),
+                month.atDay(day).atTime(11, 0).atZone(ZoneId.systemDefault()).toInstant(), false) } +
+                Appointment(99, 1, "Não mostrar outro mês", month.plusMonths(1).atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant(),
+                    month.plusMonths(1).atDay(2).atStartOfDay(ZoneOffset.UTC).toInstant(), true)
+            val personal = (1..2).map { PersonalEvent("personal-$it", "Evento pessoal $it", today.plusDays(it.toLong())) }
+            for (selection in options) for (showMoon in listOf(true, false)) for (size in listOf(DpSize(250.dp, 250.dp), DpSize(400.dp, 450.dp))) {
+                cases++
+                description = "configuration; font=$scale; month=$month; categories=$selection; moon=$showMoon; size=$size"
+                val prefs = WidgetPreferences(selection, showMoon)
+                val space = widgetSpace(ctx, size, month, today, holidays, personal, preferences = prefs, appointments = events)
+                val root = render(ctx, size, month, holidays, today, personal, preferences = prefs, appointments = events)
+                assertLayout(ctx, root, month, today, holidays, personal, space, preferences = prefs)
+                check(space.sidebarSections.size <= 2)
+                check(space.sidebarSections.all { it.rows.size <= 3 })
+                check(space.sidebarSections.map { it.category } == selection.filter { c -> space.sidebarSections.any { it.category == c } })
+                check(texts(root).none { it.text.toString() == "Não mostrar outro mês" })
+                val icons = allViews(root).filterIsInstance<android.widget.ImageView>().filter {
+                    it.contentDescription?.toString() in listOf("Lua nova", "Quarto crescente", "Lua cheia", "Quarto minguante")
+                }
+                check(icons.size == if (showMoon) MoonPhases.forMonth(month, ZoneId.systemDefault()).values.count { it.principal != null } else 0)
+                for (icon in icons) {
+                    val rect = bounds(root, icon)
+                    check(rect.width() > 0 && rect.height() > 0 && rect.bottom <= root.height)
+                    val collisions = texts(root).filter { Rect.intersects(bounds(root, it), rect) }
+                    if (collisions.isNotEmpty()) {
+                        saveFixturePreview(root, "widget-moon-collision.png")
+                        description += "; icon=$rect; text=" + collisions.joinToString { it.text.toString() + ":" + bounds(root, it) } +
+                            "; day=" + space.dayHeight + "; moon=" + space.moonSize + "; heading=" + space.monthTitleHeight +
+                            "; weekday=" + space.weekdayHeight + "; legend=" + space.legendHeight + "; padding=" + space.padding
+                    }
+                    check(collisions.isEmpty())
+                }
+                if (size.width == 400.dp && scale == 1f && selection == listOf(SidebarCategory.CALENDAR, SidebarCategory.OTHER_DATES) && showMoon)
+                    saveFixturePreview(root, "widget-categories-${month.monthValue}.png")
+            }
+        }
+    }
+
     private suspend fun checkSamsungData() {
         description = "read-only calendar integration and personal data"
         val snapshot = CalendarRepository(targetContext).load()
@@ -256,8 +331,9 @@ class WidgetLayoutInstrumentation : Instrumentation() {
 
     private suspend fun render(ctx: Context, size: DpSize, month: YearMonth, holidays: List<Holiday>,
         today: LocalDate, personal: List<PersonalEvent> = emptyList(), viewport: DpSize = size,
-        provider: HolidayProvider = BrazilianHolidayProvider()): View {
-        val result = GlanceRemoteViews().compose(ctx, size) { WidgetContent(month, today, holidays, personal, provider) }
+        provider: HolidayProvider = BrazilianHolidayProvider(), preferences: WidgetPreferences = WidgetPreferences(),
+        appointments: List<Appointment> = emptyList()): View {
+        val result = GlanceRemoteViews().compose(ctx, size) { WidgetContent(month, today, holidays, personal, provider, preferences, appointments) }
         var outcome: Result<View>? = null
         runOnMainSync {
             outcome = runCatching {
@@ -280,7 +356,8 @@ class WidgetLayoutInstrumentation : Instrumentation() {
     }
     private fun bounds(root: View, child: View) = Rect(0, 0, child.width, child.height).also { (root as ViewGroup).offsetDescendantRectToMyCoords(child, it) }
     private fun assertLayout(ctx: Context, root: View, month: YearMonth, today: LocalDate, holidays: List<Holiday>,
-        personal: List<PersonalEvent>, space: WidgetSpace, provider: HolidayProvider = BrazilianHolidayProvider()) {
+        personal: List<PersonalEvent>, space: WidgetSpace, provider: HolidayProvider = BrazilianHolidayProvider(),
+        preferences: WidgetPreferences = WidgetPreferences()) {
         val all = texts(root)
         check(all.any { it.text.toString() == space.monthLabel })
         check(WeekLabels.all { label -> all.any { it.text.toString() == label } })
@@ -314,7 +391,7 @@ class WidgetLayoutInstrumentation : Instrumentation() {
                 bounds(root, all.single { it.text.toString() == "Próximos eventos pessoais" }).top)
         }
         check(space.events.size <= 2)
-        val expectedHolidays = widgetNationalHolidays(month, today, provider)
+        val expectedHolidays = if (SidebarCategory.HOLIDAYS in preferences.categories) widgetNationalHolidays(month, today, provider) else emptyList()
         check(space.selectedHolidays == expectedHolidays)
         if (space.holidaySummary == null) check(space.nationalHolidays.map { it.holiday } == expectedHolidays)
         else {
@@ -372,24 +449,27 @@ class WidgetLayoutInstrumentation : Instrumentation() {
         val lines = dividerViews(root)
         val vertical = lines.filter { it.height > it.width }
         check(vertical.size == if (space.sideBySide) 1 else 0)
-        val horizontalCount = (if (!space.sideBySide && space.nationalHolidays.isNotEmpty()) 1 else 0) +
-            (if (space.events.isNotEmpty()) space.events.size else 0) + (if (space.otherDates.isNotEmpty()) 1 else 0)
+        val horizontalCount = (if (!space.sideBySide && space.sidebarSections.isNotEmpty()) 1 else 0) +
+            (if (space.events.isNotEmpty()) space.events.size else 0) + (space.sidebarSections.size - 1).coerceAtLeast(0)
         check(lines.size - vertical.size == horizontalCount)
         if (space.sideBySide) {
             val line = bounds(root, vertical.single())
-            check(bounds(root, all.first { it.text.toString() == space.nationalHolidays.first().dateLabel }).left > line.right)
+            space.sidebarSections.forEach { section ->
+                check(bounds(root, all.first { it.text.toString() == section.rows.first().title }).left > line.right)
+            }
             check(bounds(root, all.first { it.text.toString() == WeekLabels.first() }).right < line.left)
             check(bounds(root, all.single { it.text.toString() == space.monthLabel }).right < line.left)
             if (redLegend != null) check(bounds(root,redLegend).right < line.left)
             if (amberLegend != null) check(bounds(root,amberLegend).right < line.left)
-            if (space.otherDatesInSidebar) {
+            if (space.otherDatesInSidebar && space.nationalHolidays.isNotEmpty() &&
+                preferences.categories.indexOf(SidebarCategory.HOLIDAYS) < preferences.categories.indexOf(SidebarCategory.OTHER_DATES)) {
                 val yellow = bounds(root, all.first { it.text.toString() == space.otherDates.first().text })
                 check(yellow.left > line.right)
                 check(bounds(root, all.first { it.text.toString() == space.nationalHolidays.last().holiday.name }).bottom < yellow.top)
             }
         }
         val padding = (space.padding * ctx.resources.displayMetrics.density).roundToInt()
-        if (space.footerHeight > 0f || space.legendHeight > 0f)
+        if (space.footerHeight > 0f || (space.legendHeight > 0f && (space.legend.national || space.legend.other || space.holidaySummary != null)))
             check(kotlin.math.abs(root.height - padding - rects.maxOf { it.bottom }) <= 3)
     }
     private fun dividerViews(view: View): List<View> = buildList {
