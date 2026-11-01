@@ -34,6 +34,8 @@ class WidgetLayoutInstrumentation : Instrumentation() {
     private var onlyConfiguration = false
     private var onlyLunar = false
     private var onlyWidget = false
+    private var onlyAgenda = false
+    private var agendaCases = 0
     private var onlyDate = false
     private var dateCases = 0
     private var cases = 0
@@ -45,11 +47,12 @@ class WidgetLayoutInstrumentation : Instrumentation() {
         onlyConfiguration = arguments?.getString("section") == "configuration"
         onlyLunar = arguments?.getString("section") == "moon"
         onlyWidget = arguments?.getString("section") == "widget"
+        onlyAgenda = arguments?.getString("section") == "agenda"
         onlyDate = arguments?.getString("section") == "date"
         start()
     }
     override fun onStart() {
-        val total = if (onlyLunar || onlyDate || onlyConfiguration) 1 else if (onlyWidget) 3 else if (checkDevice) 6 else 5
+        val total = if (onlyLunar || onlyDate || onlyConfiguration || onlyAgenda) 1 else if (onlyWidget) 3 else if (checkDevice) 7 else 6
         var failures = 0
         fun test(index: Int, name: String, body: () -> Unit) {
             fun status(code: Int, detail: String = "") {
@@ -69,19 +72,22 @@ class WidgetLayoutInstrumentation : Instrumentation() {
             }
         }
         if (onlyConfiguration) test(1, "configurableSidebarAndLunarIndicators") { runBlocking { checkConfigurationMatrix() } }
-        if (!onlyLunar && !onlyDate && !onlyConfiguration) {
+        if (!onlyLunar && !onlyDate && !onlyConfiguration && !onlyAgenda) {
         test(1, "personalCrudAndDurableStorage") { runBlocking { checkPersistence() } }
         test(2, "independentWidgetMonthState") { runBlocking { checkNavigation() } }
         test(3, "remoteViewsLayoutMatrix") { runBlocking { renderMatrix(); checkConfigurationMatrix() } }
         }
-        if (!onlyWidget && !onlyDate && !onlyConfiguration) test(if (onlyLunar) 1 else 4, "lunarCalendarAndSelectedDay") {
+        if (!onlyWidget && !onlyDate && !onlyConfiguration && !onlyAgenda) test(if (onlyLunar) 1 else 4, "lunarCalendarAndSelectedDay") {
             lunarCases = com.folhinhautil.app.runMoonCalendarChecks(this) { description = it }
         }
-        if (!onlyWidget && !onlyLunar && !onlyConfiguration) test(if (onlyDate) 1 else 5, "personalEventDatePicker") {
+        if (!onlyWidget && !onlyLunar && !onlyConfiguration && !onlyAgenda) test(if (onlyDate) 1 else 5, "personalEventDatePicker") {
             dateCases = com.folhinhautil.app.runPersonalDateChecks(this) { description = it }
         }
-        if (checkDevice) test(6, "selectedCalendarsAndUnchangedPersonalData") { runBlocking { checkSamsungData() } }
-        finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "\nRendered widget cases: $cases; lunar checks: $lunarCases; date checks: $dateCases; failures: $failures\n") })
+        if (!onlyWidget && !onlyLunar && !onlyDate && !onlyConfiguration) test(if (onlyAgenda) 1 else 6, "minhaAgendaCrudSectionsAndNavigation") {
+            agendaCases = com.folhinhautil.app.runPersonalAgendaChecks(this) { description = it }
+        }
+        if (checkDevice) test(7, "selectedCalendarsAndUnchangedPersonalData") { runBlocking { checkSamsungData() } }
+        finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "\nRendered widget cases: $cases; lunar checks: $lunarCases; date checks: $dateCases; agenda checks: $agendaCases; failures: $failures\n") })
     }
 
     private suspend fun checkPersistence() {

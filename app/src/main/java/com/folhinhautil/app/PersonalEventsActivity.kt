@@ -5,14 +5,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -34,13 +39,16 @@ class PersonalEventsActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFB6E4BE), onPrimary = Color(0xFF101513),
                 background = Color(0xFF101513), surface = Color(0xFF1B231F))) {
-                Surface(Modifier.fillMaxSize()) { PersonalEventsScreen(back = { finish() }) }
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { PersonalEventsScreen(back = { finish() }) }
             }
         }
     }
 }
 
 private data class PersonalListState(val events: List<PersonalEvent> = emptyList(), val ready: Boolean = false, val error: Boolean = false)
+private val AgendaAmber = Color(0xFFECC88B)
+private val AgendaMuted = Color(0xFFADB9B0)
+private val AgendaPanel = Color(0xFF1B231F)
 
 @Composable
 internal fun PersonalEventsScreen(back: () -> Unit, repositoryOverride: PersonalEventsRepository? = null,
@@ -71,26 +79,61 @@ internal fun PersonalEventsScreen(back: () -> Unit, repositoryOverride: Personal
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: RuntimeException) { operationError = "Alteração salva. O widget será atualizado na próxima atualização permitida." }
     }
-    Column(Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        TextButton(onClick = back) { Text("Voltar") }
-        Text("Eventos pessoais", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
-        Text("Datas importantes salvas somente neste aparelho.")
-        Button(onClick = { edit(null) }, enabled = state.ready && !busy) { Text("Cadastrar evento") }
-        if (!state.ready && !state.error) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (state.error) Text("Não foi possível ler os eventos salvos. Seus dados não foram substituídos.", color = MaterialTheme.colorScheme.error)
-        operationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        if (state.ready && state.events.isEmpty()) Text("Nenhum evento pessoal cadastrado.")
-        state.events.sortedWith(compareBy<PersonalEvent> { nextPersonalOccurrence(it, LocalDate.now())?.date ?: LocalDate.MAX }.thenBy { it.date }).forEach { event ->
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(event.title, fontWeight = FontWeight.Medium)
-                    Text(formatPersonalDate(event.date) + if (event.annual) " · Anual" else "")
-                    val next = nextPersonalOccurrence(event, LocalDate.now())
-                    Text(next?.let { "${it.countdown} · ${formatPersonalDate(it.date)}" } ?: "Evento encerrado", color = MaterialTheme.colorScheme.primary)
-                    Row {
-                        TextButton(onClick = { edit(event) }, enabled = !busy) { Text("Editar") }
-                        TextButton(onClick = { deletingId = event.id }, enabled = !busy) { Text("Excluir") }
+    val today = LocalDate.now()
+    val upcoming = upcomingPersonalEvents(state.events, today)
+    val ended = state.events.filter { nextPersonalOccurrence(it, today) == null }
+        .sortedWith(compareByDescending<PersonalEvent> { it.date }.thenBy { it.id })
+    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TextButton(onClick = back) { Text("Voltar", color = AgendaAmber) }
+            Text("Minha Agenda", Modifier.weight(1f).semantics { heading() },
+                style = MaterialTheme.typography.headlineSmall, color = AgendaAmber)
+        }
+        LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            item {
+                Text("Seus eventos pessoais, em um só lugar.", color = AgendaMuted)
+                Text("Datas importantes salvas somente neste aparelho.", color = AgendaMuted,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            item {
+                Button(onClick = { edit(null) }, enabled = state.ready && !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AgendaAmber, contentColor = Color(0xFF101513))) {
+                    Text("Cadastrar evento")
+                }
+            }
+            if (!state.ready && !state.error) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            if (state.error) item {
+                Text("Não foi possível ler os eventos salvos. Seus dados não foram substituídos.", color = MaterialTheme.colorScheme.error)
+            }
+            operationError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
+            if (state.ready && state.events.isEmpty()) item {
+                Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Nenhum evento pessoal cadastrado.", color = AgendaMuted)
+                    Text("Cadastre uma data importante para começar.", color = AgendaMuted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (upcoming.isNotEmpty()) {
+                item { AgendaSectionHeading("Próximos eventos") }
+                items(upcoming, key = { "upcoming-${it.event.id}" }) { occurrence ->
+                    AgendaEventCard(occurrence.event, occurrence, busy,
+                        onEdit = { edit(occurrence.event) }, onDelete = { deletingId = occurrence.event.id })
+                }
+            } else if (state.ready && state.events.isNotEmpty()) item {
+                Text("Nenhum evento próximo.", color = AgendaMuted)
+            }
+            if (ended.isNotEmpty()) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        AgendaSectionHeading("Eventos encerrados")
+                        Text("Datas passadas que continuam disponíveis para consulta.", color = AgendaMuted,
+                            style = MaterialTheme.typography.bodySmall)
                     }
+                }
+                items(ended, key = { "ended-${it.id}" }) { event ->
+                    AgendaEventCard(event, null, busy, onEdit = { edit(event) }, onDelete = { deletingId = event.id })
                 }
             }
         }
@@ -135,4 +178,27 @@ internal fun PersonalEventsScreen(back: () -> Unit, repositoryOverride: Personal
                 finally { busy = false }
             } }) { Text("Excluir") }
         }, dismissButton = { TextButton(onClick = { deletingId = null }, enabled = !busy) { Text("Cancelar") } })
+}
+
+@Composable
+private fun AgendaSectionHeading(label: String) {
+    Text(label, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold, color = AgendaAmber)
+}
+
+@Composable
+private fun AgendaEventCard(event: PersonalEvent, occurrence: PersonalOccurrence?, busy: Boolean,
+    onEdit: () -> Unit, onDelete: () -> Unit) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = AgendaPanel)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(event.title, fontWeight = FontWeight.Medium, color = Color(0xFFE4EAE5))
+            Text(formatPersonalDate(event.date) + if (event.annual) " · Anual" else "", color = AgendaMuted)
+            Text(occurrence?.let { "${it.countdown} · ${formatPersonalDate(it.date)}" } ?: "Evento encerrado",
+                color = if (occurrence == null) AgendaMuted else Color(0xFF9ED8CB))
+            Row {
+                TextButton(onClick = onEdit, enabled = !busy) { Text("Editar", color = AgendaAmber) }
+                TextButton(onClick = onDelete, enabled = !busy) { Text("Excluir", color = Color(0xFFFF9894)) }
+            }
+        }
+    }
 }

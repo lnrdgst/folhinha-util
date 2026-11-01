@@ -98,7 +98,7 @@ private fun FolhinhaApp(model: CalendarViewModel = viewModel()) {
             }
         }
         TextButton(onClick = { context.startActivity(Intent(context, PersonalEventsActivity::class.java)) }) {
-            Text("Eventos pessoais", color = Amber)
+            Text("Minha Agenda", color = Amber)
         }
         TextButton(onClick = { context.startActivity(Intent(context, com.folhinhautil.app.widget.WidgetSettingsActivity::class.java)) }) {
             Text("Personalizar widgets", color = Aqua)

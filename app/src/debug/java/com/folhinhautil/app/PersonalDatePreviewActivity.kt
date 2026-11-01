@@ -26,12 +26,25 @@ class PersonalDatePreviewActivity : ComponentActivity() {
         if (intent.getBooleanExtra("reset",true)) file.delete()
         fixtureRepository = PersonalEventsRepository(PreferenceDataStoreFactory.create(scope = fixtureScope, produceFile = { file }))
         if (intent.getBooleanExtra("reset",true)) runBlocking {
-            fixtureRepository.save(PersonalEvent("date-fixture","Evento de teste",LocalDate.parse(intent.getStringExtra("date") ?: "2026-12-27"),true))
+            val today = LocalDate.now()
+            val events = when (intent.getStringExtra("agendaFixture")) {
+                "empty" -> emptyList()
+                "past" -> listOf(PersonalEvent("past-fixture", "Registro encerrado", today.minusDays(1)))
+                "mixed" -> listOf(
+                    PersonalEvent("later-fixture", "Reunião futura", today.plusDays(5)),
+                    PersonalEvent("past-fixture", "Registro encerrado", today.minusDays(1)),
+                    PersonalEvent("annual-fixture", "Aniversário anual", today.minusYears(4).plusDays(2), true),
+                    PersonalEvent("today-fixture", "Evento de hoje", today),
+                )
+                else -> listOf(PersonalEvent("date-fixture", "Evento de teste",
+                    LocalDate.parse(intent.getStringExtra("date") ?: "2026-12-27"), true))
+            }
+            events.forEach { fixtureRepository.save(it) }
         }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFB6E4BE), onPrimary = Color(0xFF101513),
                 background = Color(0xFF101513), surface = Color(0xFF1B231F))) {
-                Surface(Modifier.fillMaxSize()) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     PersonalEventsScreen(back = { finish() }, repositoryOverride = fixtureRepository, onSaved = {})
                 }
             }

@@ -1,0 +1,8 @@
+ README.md                                          |   5 [32m+[m[31m-[m
+ .../folhinhautil/app/PersonalAgendaDeviceChecks.kt | 228 [32m+++++++++++++++++++++[m
+ .../app/widget/WidgetLayoutInstrumentation.kt      |  18 [32m+[m[31m-[m
+ .../app/PersonalDatePreviewActivity.kt             |  17 [32m+[m[31m-[m
+ .../main/java/com/folhinhautil/app/MainActivity.kt |   2 [32m+[m[31m-[m
+ .../com/folhinhautil/app/PersonalEventsActivity.kt | 106 [32m++++++++[m[31m--[m
+ docs/MINHA-AGENDA.md                               |  73 [32m+++++++[m
+ 7 files changed, 419 insertions(+), 30 deletions(-)
